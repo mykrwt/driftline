@@ -14,6 +14,7 @@ import { createEffects } from './effects.js';
 import { createCarModel } from './models.js';
 import { createVehicle, getCarSpec, placeVehicle, stepVehicle } from './vehicle.js';
 import { createWorldScene } from './scene.js';
+import { createAutopilot } from './autopilot.js';
 import {
   createRoadProfile,
   roadOffset,
@@ -54,19 +55,24 @@ export function createWorld(options) {
     roadHeading(profile, spawnS),
   );
 
-  const scene = createWorldScene(profile, {
-    seed,
-    assets: options.assets,
-    // The impostor baker needs the raw Three.js renderer.
-    renderer: options.renderer?.renderer ?? options.renderer,
-    palette: options.palette,
-  });
-  const effects = createEffects(scene.scene);
-  const cameraState = createCamera();
   const renderer = options.renderer ?? createRenderer(options.canvas, {
     quality: options.quality?.quality ?? 'high',
     autoQuality: options.quality?.autoQuality ?? true,
   });
+
+  const scene = createWorldScene(profile, {
+    seed,
+    assets: options.assets,
+    // The impostor baker needs the raw Three.js renderer.
+    renderer: renderer.renderer,
+    palette: options.palette,
+  });
+  const effects = createEffects(scene.scene);
+  const cameraState = createCamera();
+  renderer.setExposure?.(scene.palette.exposure ?? 1);
+
+  // The camera starts behind the car, not at the world origin.
+  updateCamera(cameraState, vehicle, 1 / 60, true);
 
   // --- car model ---------------------------------------------------------
   const carRoot = new THREE.Group();
@@ -117,6 +123,12 @@ export function createWorld(options) {
   let wasDrifting = false;
   let stuckTimer = 0;
 
+  // The driving bot. It takes over the controls when it is enabled, which is
+  // how the attract mode and the automated capture runs work.
+  const autopilot = createAutopilot(profile);
+  let autopilotEnabled = false;
+  let elapsed = 0;
+
   /**
    * @param {number} dt
    */
@@ -124,13 +136,15 @@ export function createWorld(options) {
     const controls = options.input
       ? options.input.state
       : { steer: 0, throttle: 0, brake: 0, handbrake: false, boost: false };
-    const input = {
-      steer: controls.steer,
-      throttle: controls.throttle,
-      brake: controls.brake,
-      handbrake: controls.handbrake,
-      boost: controls.boost,
-    };
+    const input = autopilotEnabled
+      ? autopilot.update(vehicle, dt)
+      : {
+          steer: controls.steer,
+          throttle: controls.throttle,
+          brake: controls.brake,
+          handbrake: controls.handbrake,
+          boost: controls.boost,
+        };
 
     // Fixed sub steps keep the suspension stable at any frame rate.
     let remaining = Math.min(dt, 0.1);
@@ -175,7 +189,7 @@ export function createWorld(options) {
   function updateEffects(dt) {
     smokeTimer += dt;
     const emitInterval = 0.03;
-    for (const wheel of vehicle.wheels) {
+    for (const [index, wheel] of vehicle.wheels.entries()) {
       const slipping = wheel.contact && (Math.abs(wheel.slipAngle) > 0.12 || Math.abs(wheel.slipRatio) > 0.25);
       if (!slipping || smokeTimer < emitInterval) continue;
       smokeTimer = 0;
@@ -190,15 +204,7 @@ export function createWorld(options) {
         tint,
       );
       if (wheel.onRoad) {
-        effects.addSkid(
-          wheel.contactPoint.x,
-          wheel.contactPoint.y,
-          wheel.contactPoint.z,
-          0,
-          1,
-          0.34,
-          0.35,
-        );
+        effects.addSkid(index, wheel.contactPoint.x, wheel.contactPoint.y, wheel.contactPoint.z, 0.34);
       }
     }
     if (vehicle.drifting && !wasDrifting) {
@@ -222,6 +228,9 @@ export function createWorld(options) {
       roadHeading(profile, s),
     );
     vehicle.boostFuel = Math.max(vehicle.boostFuel, 0.3);
+    // The camera jumps straight to the car instead of flying in from the last
+    // position.
+    updateCamera(cameraState, vehicle, 1 / 60, true);
     emit('respawn');
   }
 
@@ -229,6 +238,7 @@ export function createWorld(options) {
    * @param {number} dt
    */
   function render(dt) {
+    elapsed += dt;
     // The car model follows the chassis exactly.
     carRoot.position.copy(vehicle.position);
     carRoot.quaternion.copy(vehicle.quaternion);
@@ -240,10 +250,19 @@ export function createWorld(options) {
       if (!mesh) return;
       mesh.rotation.order = 'YXZ';
       mesh.rotation.x = wheel.spin;
-      mesh.rotation.y = wheel.spec.front ? vehicle.wheelAngle : 0;
+      // The car faces +Z, so its right hand side is -X: the visual wheels
+      // turn the other way round compared to the heading.
+      mesh.rotation.y = wheel.spec.front ? -vehicle.wheelAngle : 0;
       // The wheel moves up into the chassis as the suspension compresses.
       mesh.position.y = (mesh.userData.baseY ?? (mesh.userData.baseY = mesh.position.y)) + wheel.compression;
     });
+
+    // The brake lights come on, the boost burns the exhaust.
+    const tailMat = carModel.userData.tailMat;
+    if (tailMat) {
+      const braking = vehicle.braking ? 3.4 : 1.4;
+      tailMat.emissiveIntensity += (braking - tailMat.emissiveIntensity) * Math.min(1, dt * 14);
+    }
 
     for (const ghost of ghosts.values()) {
       ghost.root.position.set(ghost.data.x, ghost.data.y, ghost.data.z);
@@ -260,7 +279,7 @@ export function createWorld(options) {
       });
     }
 
-    scene.update(vehicle.position.z, vehicle.position.x, vehicle.position.z);
+    scene.update(vehicle.position.z, vehicle.position.x, vehicle.position.z, elapsed);
     renderer.render(scene.scene, cameraState);
     void dt;
   }
@@ -307,6 +326,24 @@ export function createWorld(options) {
     render,
     respawn,
     setGhosts,
+    /**
+     * Hand the controls over to the driving bot.
+     * @param {boolean} value
+     */
+    setAutopilot(value) {
+      autopilotEnabled = Boolean(value);
+    },
+    get autopilotEnabled() {
+      return autopilotEnabled;
+    },
+    /**
+     * Change the time of day while the race is running.
+     * @param {any} palette
+     */
+    setPalette(palette) {
+      scene.setPalette?.(palette);
+      renderer.setExposure?.(scene.palette.exposure ?? 1);
+    },
     /**
      * @returns {{ speed: number, kmh: number, drift: number, multiplier: number, boost: number, onRoad: boolean, s: number }}
      */

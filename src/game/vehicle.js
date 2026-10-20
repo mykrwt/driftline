@@ -224,6 +224,7 @@ export function createVehicle(spec) {
     speed: 0,
     slipAngle: 0,
     drifting: false,
+    braking: false,
     driftScore: 0,
     driftTime: 0,
     driftMultiplier: 1,
@@ -302,6 +303,8 @@ export function stepVehicle(state, input, groundAt, dt) {
   const throttle = clamp(input.throttle, 0, 1);
   const brake = clamp(input.brake, 0, 1);
   const handbrake = Boolean(input.handbrake);
+  // The brake lights and the tyre squeal follow the brake pedal.
+  state.braking = brake > 0.05 || handbrake;
 
   // Chassis basis.
   _right.set(1, 0, 0).applyQuaternion(state.quaternion);

@@ -83,26 +83,14 @@ export function createEffects(scene) {
   let particleCursor = 0;
 
   // ----------------------------------------------------------------- skid
-  const skidPositions = new Float32Array(MAX_MARKS * 4 * 3);
+  const skidPositions = new Float32Array(MAX_MARKS * 6 * 3);
   const skidGeometry = new THREE.BufferGeometry();
   skidGeometry.setAttribute('position', new THREE.BufferAttribute(skidPositions, 3));
-  const skidIndices = new Uint16Array(MAX_MARKS * 6);
-  for (let i = 0; i < MAX_MARKS; i++) {
-    const v = i * 4;
-    const o = i * 6;
-    skidIndices[o] = v;
-    skidIndices[o + 1] = v + 2;
-    skidIndices[o + 2] = v + 1;
-    skidIndices[o + 3] = v + 1;
-    skidIndices[o + 4] = v + 2;
-    skidIndices[o + 5] = v + 3;
-  }
-  skidGeometry.setIndex(new THREE.BufferAttribute(skidIndices, 1));
   skidGeometry.setDrawRange(0, 0);
   const skidMaterial = new THREE.MeshBasicMaterial({
-    color: 0x0a0a0c,
+    color: 0x090a0d,
     transparent: true,
-    opacity: 0.38,
+    opacity: 0.42,
     depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: -4,
@@ -114,6 +102,8 @@ export function createEffects(scene) {
   scene.add(skid);
   let markCursor = 0;
   let markCount = 0;
+  /** The last point of every mark stream, so the marks form ribbons. */
+  const skidStreams = new Map();
 
   /**
    * @param {number} x @param {number} y @param {number} z
@@ -137,33 +127,50 @@ export function createEffects(scene) {
   }
 
   /**
+   * Lay down a strip of rubber.
+   *
+   * The strip connects the last point of the stream with the new one, so the
+   * marks form a continuous ribbon behind the tyre instead of dots.
+   *
+   * @param {number} id the stream (the wheel index)
    * @param {number} x @param {number} y @param {number} z
-   * @param {number} nx normal x
-   * @param {number} nz normal z
    * @param {number} width
-   * @param {number} alpha
    */
-  function addSkid(x, y, z, nx, nz, width, alpha) {
+  function addSkid(id, x, y, z, width) {
+    const last = skidStreams.get(id);
+    if (!last) {
+      skidStreams.set(id, { x, y, z });
+      return;
+    }
+    const dx = x - last.x;
+    const dz = z - last.z;
+    const length = Math.hypot(dx, dz);
+    if (length < 0.12) return;
+    // The ribbon runs across the direction of travel.
+    const sx = (-dz / length) * (width / 2);
+    const sz = (dx / length) * (width / 2);
     const index = markCursor;
     markCursor = (markCursor + 1) % MAX_MARKS;
     markCount = Math.min(MAX_MARKS, markCount + 1);
-    const half = width / 2;
-    const o = index * 12;
-    skidPositions[o] = x + nx * half;
-    skidPositions[o + 1] = y + 0.015;
-    skidPositions[o + 2] = z + nz * half;
-    skidPositions[o + 3] = x - nx * half;
-    skidPositions[o + 4] = y + 0.015;
-    skidPositions[o + 5] = z - nz * half;
-    skidPositions[o + 6] = skidPositions[o];
-    skidPositions[o + 7] = skidPositions[o + 1];
-    skidPositions[o + 8] = skidPositions[o + 2];
-    skidPositions[o + 9] = skidPositions[o + 3];
-    skidPositions[o + 10] = skidPositions[o + 4];
-    skidPositions[o + 11] = skidPositions[o + 5];
+    const o = index * 18;
+    const y0 = last.y + 0.02;
+    const y1 = y + 0.02;
+    const set = (slot, px, py, pz) => {
+      skidPositions[o + slot * 3] = px;
+      skidPositions[o + slot * 3 + 1] = py;
+      skidPositions[o + slot * 3 + 2] = pz;
+    };
+    set(0, last.x + sx, y0, last.z + sz);
+    set(1, last.x - sx, y0, last.z - sz);
+    set(2, x - sx, y1, z - sz);
+    set(3, last.x + sx, y0, last.z + sz);
+    set(4, x - sx, y1, z - sz);
+    set(5, x + sx, y1, z + sz);
     skidGeometry.attributes.position.needsUpdate = true;
     skidGeometry.setDrawRange(0, markCount * 6);
-    void alpha;
+    last.x = x;
+    last.y = y;
+    last.z = z;
   }
 
   /**
@@ -208,6 +215,7 @@ export function createEffects(scene) {
     smokeGeometry.attributes.aAlpha.needsUpdate = true;
     markCount = 0;
     markCursor = 0;
+    skidStreams.clear();
     skidGeometry.setDrawRange(0, 0);
   }
 

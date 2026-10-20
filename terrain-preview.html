@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Driftline - terrain look comparison</title>
+<link rel="stylesheet" href="./styles/base.css?v=2" />
+<style>
+  body { overflow: auto; }
+  .preview { position: fixed; inset: 0; }
+  .preview canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .pv-bar {
+    position: absolute;
+    left: 50%;
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    z-index: 5;
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    border-radius: 999px;
+    background: rgba(8, 11, 22, 0.72);
+    border: 1px solid rgba(150, 180, 255, 0.25);
+    backdrop-filter: blur(10px);
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 94vw;
+  }
+  .pv-bar button {
+    min-height: 40px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(150, 180, 255, 0.22);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--fg-dim);
+    font-size: 13px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+  .pv-bar button[aria-pressed="true"] { background: linear-gradient(135deg, var(--accent), #4d7dff); color: #04121a; border-color: transparent; }
+  .pv-label {
+    position: absolute;
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    left: 16px;
+    z-index: 5;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: rgba(8, 11, 22, 0.66);
+    border: 1px solid rgba(150, 180, 255, 0.2);
+    font-size: 13px;
+    line-height: 1.5;
+    max-width: 320px;
+  }
+  .pv-label b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .pv-label span { color: var(--fg-dim); }
+  .pv-stats {
+    position: absolute;
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    right: 16px;
+    z-index: 5;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(0, 0, 0, 0.5);
+    padding: 8px 10px;
+    border-radius: 8px;
+    white-space: pre;
+  }
+</style>
+</head>
+<body>
+<div class="preview">
+  <canvas id="pv"></canvas>
+  <div class="pv-label" id="pv-label"><b>Loading…</b><span>Preparing the world</span></div>
+  <div class="pv-stats" id="pv-stats"></div>
+  <div class="pv-bar" id="pv-bar"></div>
+</div>
+<script type="module" src="./src/preview.js?v=1"></script>
+</body>
+</html>

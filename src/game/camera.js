@@ -4,6 +4,10 @@
  * The camera follows the chassis, not the velocity, so a drift shows the car
  * sideways - but it blends a little of the travel direction so the view stays
  * readable at high slip angles.
+ *
+ * It also sits high enough to see the road ahead, pulls back and widens with
+ * the speed, and leans into the corner, which is what makes a driving game
+ * feel fast.
  */
 
 import { clamp, damp, wrapAngle } from '../core/math.js';
@@ -42,8 +46,9 @@ export function createCamera() {
  * @param {CameraState} camera
  * @param {import('./vehicle.js').VehicleState} vehicle
  * @param {number} dt
+ * @param {boolean} [immediate] snap instead of easing (used on spawn)
  */
-export function updateCamera(camera, vehicle, dt) {
+export function updateCamera(camera, vehicle, dt, immediate = false) {
   const { position, quaternion, velocity, speed } = vehicle;
 
   // The chassis forward direction in the XZ plane.
@@ -58,26 +63,43 @@ export function updateCamera(camera, vehicle, dt) {
     heading += wrapAngle(travel - heading) * 0.22;
   }
 
-  const back = 7.2 + clamp(speed * 0.035, 0, 2.4);
-  const height = 2.9;
+  const speedRatio = clamp(speed / 62, 0, 1);
+  // The camera pulls back and rises a little with the speed.
+  const back = 8.4 + speedRatio * 3.2;
+  const height = 3.35 + speedRatio * 0.55;
   const targetX = position.x - Math.sin(heading) * back;
   const targetZ = position.z - Math.cos(heading) * back;
   const targetY = position.y + height;
 
-  camera.x = damp(camera.x, targetX, 9, dt);
-  camera.z = damp(camera.z, targetZ, 9, dt);
-  camera.y = damp(camera.y, targetY, 6, dt);
+  // Look ahead down the road, not at the car: that keeps the corner in
+  // frame and makes the car feel like it is going somewhere.
+  const lookAhead = 17 + speedRatio * 16;
+  const lookX = position.x + Math.sin(heading) * lookAhead;
+  const lookZ = position.z + Math.cos(heading) * lookAhead;
+  const lookY = position.y + 1.25 - speedRatio * 0.4;
 
-  const lookAhead = 16;
-  camera.lookX = damp(camera.lookX, position.x + Math.sin(heading) * lookAhead, 8, dt);
-  camera.lookZ = damp(camera.lookZ, position.z + Math.cos(heading) * lookAhead, 8, dt);
-  camera.lookY = damp(camera.lookY, position.y + 1.4, 5, dt);
+  if (immediate) {
+    camera.x = targetX;
+    camera.y = targetY;
+    camera.z = targetZ;
+    camera.lookX = lookX;
+    camera.lookY = lookY;
+    camera.lookZ = lookZ;
+    return;
+  }
 
-  const speedRatio = clamp(speed / 70, 0, 1);
-  camera.fov = damp(camera.fov, 62 + speedRatio * 15 + (vehicle.boosting ? 4 : 0), 4, dt);
+  camera.x = damp(camera.x, targetX, 7.5, dt);
+  camera.z = damp(camera.z, targetZ, 7.5, dt);
+  camera.y = damp(camera.y, targetY, 5, dt);
+
+  camera.lookX = damp(camera.lookX, lookX, 6.5, dt);
+  camera.lookZ = damp(camera.lookZ, lookZ, 6.5, dt);
+  camera.lookY = damp(camera.lookY, lookY, 4.5, dt);
+
+  camera.fov = damp(camera.fov, 60 + speedRatio * 16 + (vehicle.boosting ? 5 : 0), 4, dt);
   // A touch of roll from the lateral acceleration.
   const lateral = velocity.x * Math.cos(heading) - velocity.z * Math.sin(heading);
-  camera.roll = damp(camera.roll, clamp(-lateral * 0.006, -0.07, 0.07), 5, dt);
+  camera.roll = damp(camera.roll, clamp(-lateral * 0.005, -0.06, 0.06), 5, dt);
 }
 
 /**

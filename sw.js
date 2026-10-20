@@ -9,7 +9,7 @@
  * The cache name carries a version, so a new deploy drops the old cache.
  */
 
-const VERSION = 'driftline-v3';
+const VERSION = 'driftline-v4';
 const CORE = [
   './',
   './index.html',
@@ -24,9 +24,13 @@ const CORE = [
   './src/core/loop.js',
   './src/core/input.js',
   './src/core/storage.js',
-  './src/game/track.js',
-  './src/game/physics.js',
+  './src/game/road.js',
+  './src/game/noise.js',
+  './src/game/palette.js',
+  './src/game/terrain.js',
+  './src/game/chunks.js',
   './src/game/camera.js',
+  './src/game/car.js',
   './src/game/models.js',
   './src/game/scene.js',
   './src/game/renderer.js',
@@ -35,7 +39,7 @@ const CORE = [
   './src/game/hud.js',
   './src/game/menus.js',
   './src/game/world.js',
-  './src/game/race.js',
+  './src/game/autopilot.js',
   './src/game/assets.js',
   './src/net/protocol.js',
   './src/net/signal.js',

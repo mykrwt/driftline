@@ -19,6 +19,7 @@ const KEY = 'driftline.v1';
  * @property {boolean} invertSteer
  * @property {boolean} showFps
  * @property {string} car             car id
+ * @property {string} palette         'alpine' | 'golden' | 'midnight'
  * @property {string} track           track id
  * @property {boolean} units          'metric' | 'imperial'
  */
@@ -28,6 +29,8 @@ const KEY = 'driftline.v1';
  * @property {Record<string, number>} bestLap     by track id
  * @property {Record<string, number>} bestDrift   by track id
  * @property {number} totalDrift
+ * @property {number} bestDistance  metres, the longest drive
+ * @property {number} bestDriftRun  points, the best single drift
  * @property {number} races
  */
 
@@ -42,6 +45,7 @@ export const DEFAULT_SETTINGS = {
   invertSteer: false,
   showFps: false,
   car: 'vector',
+  palette: 'alpine',
   track: 'coast',
   units: 'metric',
 };
@@ -51,6 +55,8 @@ export const DEFAULT_RECORDS = {
   bestLap: {},
   bestDrift: {},
   totalDrift: 0,
+  bestDistance: 0,
+  bestDriftRun: 0,
   races: 0,
 };
 

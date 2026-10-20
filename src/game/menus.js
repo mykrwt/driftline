@@ -6,6 +6,7 @@
  */
 
 import { CAR_SPECS } from './vehicle.js';
+import { PALETTES } from './palette.js';
 import { clamp } from '../core/math.js';
 
 /**
@@ -46,6 +47,33 @@ export function createMenus(options) {
 
   // ------------------------------------------------------------ car picker
   const carPicker = doc.getElementById('car-picker');
+  const palettePicker = doc.getElementById('palette-picker');
+
+  /**
+   * A row of chips that picks one value out of a list.
+   * @param {HTMLElement | null} host
+   * @param {Record<string, string>} entries
+   * @param {string} currentValue
+   * @param {(value: string) => void} onPick
+   */
+  function chipRow(host, entries, currentValue, onPick) {
+    if (!host) return;
+    host.replaceChildren(
+      ...Object.entries(entries).map(([value, label]) => {
+        const chip = doc.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip';
+        chip.setAttribute('role', 'radio');
+        chip.setAttribute('aria-checked', String(value === currentValue));
+        chip.textContent = label;
+        chip.addEventListener('click', () => {
+          onPick(value);
+          renderPickers();
+        });
+        return chip;
+      }),
+    );
+  }
 
   function renderPickers() {
     if (!carPicker) return;
@@ -66,6 +94,13 @@ export function createMenus(options) {
         return chip;
       }),
     );
+
+    const labels = {};
+    for (const [key, palette] of Object.entries(PALETTES)) labels[key] = palette.label;
+    chipRow(palettePicker, labels, options.settings.palette || 'alpine', (value) => {
+      options.settings.palette = value;
+      options.onSettingsChange(options.settings);
+    });
   }
   renderPickers();
 

@@ -11,7 +11,11 @@
     "test:watch": "node --test --watch tests/",
     "typecheck": "tsc -p tsconfig.json",
     "e2e": "node tools/e2e.mjs",
-    "verify": "npm run typecheck && npm test"
+    "verify": "npm run check:imports && npm test",
+    "check:imports": "node tools/check-imports.mjs",
+    "terrain:map": "node tools/terrain-map.mjs",
+    "scene:preview": "node tools/scene-preview.mjs",
+    "bot:bench": "node tools/bot-bench.mjs"
   },
   "keywords": [
     "game",
@@ -30,6 +34,10 @@
     "node": ">=20"
   },
   "dependencies": {
-    "three": "^0.186.1"
+    "@dimforge/rapier3d": "^0.21.0",
+    "@dimforge/rapier3d-compat": "^0.21.0",
+    "simplex-noise": "^4.0.3",
+    "three": "^0.186.1",
+    "three-noise": "^1.1.2"
   }
 }

@@ -116,18 +116,37 @@ function bustImports(source) {
 
 const server = createServer(async (req, res) => {
   const urlPath = (req.url || '/').split('?')[0];
-
+  if (process.env.REQLOG) {
+    const socket = req.socket;
+    console.log('REQ', req.method, req.url, JSON.stringify(req.headers));
+    res.on('finish', () => {
+      console.log(
+        '  -> finished',
+        res.statusCode,
+        'written=' + socket.bytesWritten,
+        'destroyed=' + socket.destroyed,
+        'writableEnded=' + socket.writableEnded,
+      );
+    });
+    res.on('close', () => console.log('  -> closed'));
+  }
   // Development helper: receive a canvas snapshot from the page and store it.
   if (req.method === 'POST' && urlPath === '/__shot') {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = Buffer.concat(chunks).toString('utf8');
-    const name = (new URL(req.url, 'http://x').searchParams.get('name') || 'frame').replace(/[^\w.-]/g, '');
+    const params = new URL(req.url, 'http://x').searchParams;
+    const name = (params.get('name') || 'frame').replace(/[^\w.-]/g, '');
+    const ext = (params.get('ext') || 'png').replace(/[^\w]/g, '');
     const dir = join(ROOT, '.harness', 'shots');
     await mkdir(dir, { recursive: true });
+    const isJpeg = body.startsWith('data:image/jpeg');
     const dataUrl = body.replace(/^data:image\/\w+;base64,/, '');
-    await writeFile(join(dir, `${name}.png`), Buffer.from(dataUrl, 'base64'));
-    res.writeHead(200, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' }).write('ok');
+    await writeFile(join(dir, `${name}.${ext}`), Buffer.from(dataUrl, 'base64'));
+    // The response has to be ended: an open response keeps the connection in
+    // the browser's pool and the page eventually deadlocks.
+    res.writeHead(200, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' });
+    res.end('ok');
     return;
   }
 
@@ -146,28 +165,47 @@ const server = createServer(async (req, res) => {
     return;
   }
   const type = MIME[extname(target).toLowerCase()] || 'application/octet-stream';
-  res.writeHead(200, {
+  const headers = {
     'content-type': type,
     'cache-control': 'no-store, no-cache, must-revalidate',
     // Service workers and WebRTC are happier with a secure context; localhost counts.
     'x-content-type-options': 'nosniff',
     // Allows the harness to import modules for debugging.
     'access-control-allow-origin': '*',
-  });
+  };
+
   if (type.startsWith('text/html')) {
     const source = await readFile(target, 'utf8');
-    res.end(source.replace(/(\?v=)[0-9a-z]+/g, `$1${getBuildId()}`));
+    const body = source.replace(/(\?v=)[0-9a-z]+/g, `$1${getBuildId()}`);
+    // An explicit length keeps the response out of chunked mode: some
+    // WebViews mishandle a chunked body that is closed early.
+    headers['content-length'] = Buffer.byteLength(body);
+    res.writeHead(200, headers);
+    res.end(body);
     return;
   }
   if (type.startsWith('text/javascript')) {
     const source = await readFile(target, 'utf8');
-    res.end(bustImports(source));
+    const body = bustImports(source);
+    headers['content-length'] = Buffer.byteLength(body);
+    res.writeHead(200, headers);
+    res.end(body);
     return;
   }
+  const info = await stat(target);
+  headers['content-length'] = info.size;
+  res.writeHead(200, headers);
   createReadStream(target).pipe(res);
 });
 
 server.listen(port, host, () => {
+  // The server must never close a connection before the browser does: a
+  // browser that reuses a connection the server already closed waits forever
+  // and the whole page hangs on the next module request. Disabling the idle
+  // timeouts keeps the connection alive for as long as the client wants it.
+  server.keepAliveTimeout = 0;
+  server.headersTimeout = 0;
+  server.requestTimeout = 0;
   const addrs = [];
   for (const list of Object.values(networkInterfaces())) {
     for (const net of list || []) {

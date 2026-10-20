@@ -227,6 +227,66 @@ export function mountainHeight(profile, x, z) {
 }
 
 /**
+ * The shape of the land away from the road.
+ *
+ * The world is a valley: the road runs along the floor and the ground climbs
+ * into hills, then into a mountain range on either side. How far out the
+ * hillside starts breathes along the route, so the drive constantly opens into
+ * wide plains and then squeezes back between rock walls.
+ *
+ * Everything is a pure function of the profile and the position, so the mesh
+ * and the physics always agree on where the ground is.
+ *
+ * @param {RoadProfile} profile
+ * @param {number} s distance along the road
+ * @param {number} lateral metres from the centre line (signed)
+ * @returns {number} metres above the level of the road
+ */
+export function terrainRelief(profile, s, lateral) {
+  const halfWidth = roadHalfWidth(profile, s);
+  const dist = Math.abs(lateral) - halfWidth;
+  if (dist <= 0) return 0;
+
+  const side = lateral < 0 ? -1 : 1;
+  const x = roadOffset(profile, s) + lateral;
+  const seed = profile.seed;
+
+  // The valley walls.
+  //
+  // The height of the wall on each side drifts along the route, so the drive
+  // alternates between a wide open valley and a tight gorge. The wall itself
+  // rises with a soft exponential, which keeps the verge flat and drivable
+  // while the land climbs away further out.
+  const wallNoise = fbm(s * 0.00115 + side * 7.7, side * 2.2, 3, seed + 911);
+  const wallHeight = 58 + (wallNoise * 0.5 + 0.5) * 96;
+  const wallStart = 26 + (wallNoise * 0.5 + 0.5) * 88;
+  const climb = 1 - Math.exp(-Math.pow(dist / 130, 1.8));
+  const valley = wallHeight * climb;
+
+  // The range on top of the walls: sharp ridged crests over broad shoulders.
+  // It only starts well away from the road, so the valley floor stays open.
+  const away = smoothstep(clamp((dist - 16) / 55, 0, 1));
+  const ridge = ridged(x * 0.0011 + side * 2.7, s * 0.0011, 4, seed + 37);
+  const peaks = Math.max(0, ridge - 0.3) * 430 * away;
+  const ridge2 = ridged(x * 0.0034 + side * 5.1, s * 0.0034, 3, seed + 43);
+  const peaks2 = Math.max(0, ridge2 - 0.34) * 165 * away;
+  const shoulders = fbm(x * 0.0026, s * 0.0026, 4, seed + 5) * 42 * away;
+
+  // Rolling ground that reaches almost to the verge.
+  const roll = fbm(x * 0.0085, s * 0.0085, 3, seed + 71) * 4.6 * smoothstep(clamp((dist - 4) / 20, 0, 1));
+
+  // Mid scale relief: this is what makes the slopes read as land instead of
+  // a smooth ramp once the sun rakes across them.
+  const crags = fbm(x * 0.019, s * 0.019, 3, seed + 233) * 5.4 * away;
+  const rubble = fbm(x * 0.055, s * 0.055, 2, seed + 311) * 1.4 * smoothstep(clamp(dist / 30, 0, 1));
+
+  // Fine bumps so the surface never reads as a smooth sheet.
+  const detail = fbm(x * 0.085, s * 0.085, 2, seed + 131) * 0.85 * smoothstep(clamp(dist / 6, 0, 1));
+
+  return valley + peaks + peaks2 + shoulders + roll + crags + rubble + detail;
+}
+
+/**
  * The banking of the road: corners lean into the turn.
  * @param {RoadProfile} profile
  * @param {number} s
@@ -254,7 +314,7 @@ export function terrainNoise(x, z) {
  * The drivable surface height at a world position.
  *
  * On the road this is the road height, just outside it blends into the
- * terrain, and far away it is rolling ground.
+ * terrain, and far away it is the open country.
  *
  * @param {RoadProfile} profile
  * @param {number} x
@@ -282,15 +342,13 @@ export function surfaceHeight(profile, x, z, result, forMesh = false) {
   }
 
   const dist = Math.abs(lateral) - halfWidth;
-  // The valley opens up: the ground starts at the level of the road and grows
-  // into the mountain range.
-  const blend = smoothstep(clamp(dist / 95, 0, 1));
-  const mountain = mountainHeight(profile, x, z);
   // The banking continues into the verge so there is no ledge at the edge.
-  const bankFade = 1 - smoothstep(clamp(dist / 40, 0, 1));
-  // A shallow ditch along the verge reads as a drainage channel.
-  const shoulder = -0.28 * Math.exp(-dist / 9);
-  const height = roadY + roadBank(profile, s) * lateral * bankFade + mountain * blend + shoulder;
+  const bankFade = 1 - smoothstep(clamp(dist / 45, 0, 1));
+  // A shallow ditch along the verge reads as a drainage channel. It starts
+  // and ends at the level of the road so the tarmac always meets the ground.
+  const ditch = -0.26 * Math.sin(Math.PI * clamp(dist / 13, 0, 1)) ** 2;
+  const relief = terrainRelief(profile, s, lateral);
+  const height = roadY + roadBank(profile, s) * lateral * bankFade + relief + ditch;
   if (result) {
     result.height = height;
     result.lateral = lateral;

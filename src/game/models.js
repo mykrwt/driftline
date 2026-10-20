@@ -7,6 +7,7 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
+import { createCar } from './car.js';
 
 /**
  * Merge a list of geometries into one (position/normal/uv only).
@@ -74,243 +75,17 @@ function cyl(r, h, seg = 8) {
 /**
  * Build the player's car.
  *
- * @param {{ color: string, accent: string, id?: string, assetKey?: string }} config
+ * The body is lofted from cross sections so the car has a real silhouette
+ * instead of a stack of boxes.
+ *
+ * @param {{ color: string, accent: string, shape?: string, assetKey?: string }} config
  * @param {boolean} [ghost] remote players render as translucent ghosts
  * @param {any} [assets] the asset library (optional)
  * @returns {THREE.Group}
  */
 export function createCarModel(config, ghost = false, assets = null) {
-  const asset = assets && config.assetKey ? assets.car(config.assetKey) : null;
-  if (asset) return buildAssetCar(asset, ghost, config);
-  return buildProceduralCar(config, ghost);
-}
-
-/**
- * A soft round shadow, shared by every car.
- * @returns {THREE.CanvasTexture}
- */
-let shadowTexture = null;
-function getShadowTexture() {
-  if (shadowTexture) return shadowTexture;
-  const size = 64;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  const grad = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, 'rgba(0,0,0,0.55)');
-  grad.addColorStop(0.6, 'rgba(0,0,0,0.28)');
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  shadowTexture = new THREE.CanvasTexture(canvas);
-  shadowTexture.needsUpdate = true;
-  return shadowTexture;
-}
-
-/**
- * Use a downloaded low poly car and keep its wheels separate so they can
- * steer and spin.
- * @param {{ root: THREE.Object3D, wheels: THREE.Object3D[] }} asset
- * @param {boolean} ghost
- * @param {{ color?: string }} config
- * @returns {THREE.Group}
- */
-function buildAssetCar(asset, ghost, config) {
-  const root = new THREE.Group();
-  const body = new THREE.Group();
-  const model = asset.root.clone(true);
-
-  /** @type {THREE.Mesh[]} */
-  const wheels = [];
-  /** @type {THREE.Mesh[]} */
-  const frontWheels = [];
-  model.traverse((object) => {
-    if (!(object instanceof THREE.Mesh)) return;
-    object.material = object.material?.clone?.() ?? new THREE.MeshStandardMaterial();
-    object.material.roughness = 0.4;
-    object.material.metalness = 0.3;
-    if (ghost) {
-      object.material.transparent = true;
-      object.material.opacity = 0.55;
-      object.material.depthWrite = false;
-      // Tint the ghost so players can tell each other apart.
-      if (config?.color) object.material.color = new THREE.Color(config.color).lerp(new THREE.Color(0xffffff), 0.35);
-    }
-    if (/wheel/i.test(object.name)) {
-      wheels.push(object);
-      if (/front/i.test(object.name)) frontWheels.push(object);
-    }
-  });
-
-  body.add(model);
-  root.add(body);
-
-  // Cheap contact shadow.
-  const shadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.6, 4.8),
-    new THREE.MeshBasicMaterial({
-      map: getShadowTexture(),
-      transparent: true,
-      opacity: 0.75,
-      depthWrite: false,
-    }),
-  );
-  shadow.rotation.x = -Math.PI / 2;
-  shadow.position.y = 0.02;
-  shadow.renderOrder = 1;
-  root.add(shadow);
-
-  root.userData = { wheels, frontWheels, body, model, ghost };
-  return root;
-}
-
-/**
- * Fallback car built from primitives (used before the assets finish loading).
- * @param {{ color: string, accent: string }} config
- * @param {boolean} ghost
- * @returns {THREE.Group}
- */
-function buildProceduralCar(config, ghost) {
-  const group = new THREE.Group();
-  const bodyColor = new THREE.Color(config.color);
-  const accentColor = new THREE.Color(config.accent);
-
-  const bodyMat = new THREE.MeshStandardMaterial({
-    color: bodyColor,
-    roughness: 0.42,
-    metalness: 0.35,
-    transparent: ghost,
-    opacity: ghost ? 0.55 : 1,
-    depthWrite: !ghost,
-  });
-  const accentMat = new THREE.MeshStandardMaterial({
-    color: accentColor,
-    roughness: 0.35,
-    metalness: 0.2,
-    transparent: ghost,
-    opacity: ghost ? 0.5 : 1,
-  });
-  const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x16203a,
-    roughness: 0.12,
-    metalness: 0.6,
-    transparent: true,
-    opacity: ghost ? 0.4 : 0.92,
-  });
-  const tyreMat = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.95, metalness: 0 });
-  const trimMat = new THREE.MeshStandardMaterial({ color: 0x22262e, roughness: 0.7, metalness: 0.2 });
-
-  // --- body ------------------------------------------------------------
-  const lower = new THREE.Mesh(new THREE.BoxGeometry(1.86, 0.42, 4.05), bodyMat);
-  lower.position.y = 0.52;
-  group.add(lower);
-
-  const upper = new THREE.Mesh(new THREE.BoxGeometry(1.68, 0.34, 2.25), bodyMat);
-  upper.position.set(0, 0.86, -0.15);
-  group.add(upper);
-
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.26, 0.9), bodyMat);
-  nose.position.set(0, 0.58, 1.92);
-  group.add(nose);
-
-  // cabin glass
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.34, 1.85), glassMat);
-  cabin.position.set(0, 1.02, -0.2);
-  group.add(cabin);
-
-  // roof
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.12, 1.5), bodyMat);
-  roof.position.set(0, 1.2, -0.3);
-  group.add(roof);
-
-  // stripe
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.02, 3.9), accentMat);
-  stripe.position.set(0, 0.74, 0);
-  group.add(stripe);
-
-  // spoiler
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.08, 0.42), trimMat);
-  wing.position.set(0, 1.16, -1.95);
-  group.add(wing);
-  for (const side of [-1, 1]) {
-    const stand = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.34, 0.14), trimMat);
-    stand.position.set(side * 0.62, 0.96, -1.92);
-    group.add(stand);
-  }
-
-  // lights
-  const headMat = new THREE.MeshStandardMaterial({
-    color: 0xfff4d6,
-    emissive: 0xffe9b0,
-    emissiveIntensity: 0.85,
-    roughness: 0.3,
-  });
-  const tailMat = new THREE.MeshStandardMaterial({
-    color: 0xff3b52,
-    emissive: 0xff2038,
-    emissiveIntensity: 1.1,
-    roughness: 0.4,
-  });
-  for (const side of [-1, 1]) {
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.16, 0.08), headMat);
-    head.position.set(side * 0.58, 0.62, 2.34);
-    group.add(head);
-
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.14, 0.08), tailMat);
-    tail.position.set(side * 0.56, 0.68, -2.04);
-    group.add(tail);
-  }
-
-  // --- wheels ----------------------------------------------------------
-  const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.26, 12);
-  wheelGeo.rotateZ(Math.PI / 2);
-  /** @type {THREE.Mesh[]} */
-  const wheels = [];
-  const wheelPositions = [
-    [-0.88, 0.34, 1.28],
-    [0.88, 0.34, 1.28],
-    [-0.88, 0.34, -1.32],
-    [0.88, 0.34, -1.32],
-  ];
-  for (const [x, y, z] of wheelPositions) {
-    const wheel = new THREE.Mesh(wheelGeo, tyreMat);
-    wheel.position.set(x, y, z);
-    wheels.push(wheel);
-    group.add(wheel);
-  }
-
-  // hub caps
-  const hubGeo = new THREE.CylinderGeometry(0.17, 0.17, 0.27, 8);
-  hubGeo.rotateZ(Math.PI / 2);
-  for (const [x, y, z] of wheelPositions) {
-    const hub = new THREE.Mesh(hubGeo, accentMat);
-    hub.position.set(x, y, z);
-    group.add(hub);
-  }
-
-  // soft blob shadow (much cheaper than a shadow map)
-  const shadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.2, 4.4),
-    new THREE.MeshBasicMaterial({
-      map: getShadowTexture(),
-      transparent: true,
-      opacity: 0.7,
-      depthWrite: false,
-    }),
-  );
-  shadow.rotation.x = -Math.PI / 2;
-  shadow.position.y = 0.02;
-  shadow.renderOrder = 1;
-  group.add(shadow);
-
-  group.userData.wheels = wheels;
-  group.userData.frontWheels = wheels.slice(0, 2);
-  group.userData.ghost = ghost;
-  group.userData.headMat = headMat;
-  group.userData.tailMat = tailMat;
-  group.userData.bodyMat = bodyMat;
-  return group;
+  void assets;
+  return createCar({ ...config, shape: config.shape || config.assetKey }, ghost);
 }
 
 /**
@@ -485,9 +260,10 @@ export function createRoadTexture(palette, baseImage = null) {
   const ctx = canvas.getContext('2d');
 
   if (baseImage) {
-    // Photographic asphalt, darkened a touch so the markings pop.
+    // Photographic asphalt. It is lifted and cooled a little, because the
+    // photo is almost black and the tarmac has to read as grey.
     ctx.drawImage(baseImage, 0, 0, size, size);
-    ctx.fillStyle = 'rgba(18, 20, 26, 0.35)';
+    ctx.fillStyle = 'rgba(196, 202, 214, 0.3)';
     ctx.fillRect(0, 0, size, size);
   } else {
     ctx.fillStyle = palette.road;
@@ -506,17 +282,17 @@ export function createRoadTexture(palette, baseImage = null) {
   }
 
   // edge lines (u = 0 and u = 1 are the road edges)
-  ctx.fillStyle = palette.lane;
-  ctx.globalAlpha = 0.85;
-  ctx.fillRect(6, 0, 7, size);
-  ctx.fillRect(size - 13, 0, 7, size);
+  ctx.fillStyle = '#eef2ff';
+  ctx.globalAlpha = 0.92;
+  ctx.fillRect(7, 0, 10, size);
+  ctx.fillRect(size - 17, 0, 10, size);
   ctx.globalAlpha = 1;
 
   // centre dashes
-  ctx.fillStyle = palette.lane;
-  ctx.globalAlpha = 0.75;
+  ctx.fillStyle = '#eef2ff';
+  ctx.globalAlpha = 0.8;
   for (let i = 0; i < 2; i++) {
-    ctx.fillRect(size / 2 - 4, i * (size / 2), 8, size / 5);
+    ctx.fillRect(size / 2 - 5, i * (size / 2), 10, size / 5);
   }
   ctx.globalAlpha = 1;
 

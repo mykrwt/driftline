@@ -23,18 +23,12 @@ const BASE = './assets/models/';
  * @property {string} [label]
  */
 
-/** @type {Record<string, CarAssetSpec>} */
-export const CAR_ASSETS = {
-  vector: { file: 'car-kit/Models/GLB format/sedan-sports.glb', length: 4.3, label: 'Vector GT' },
-  comet: { file: 'car-kit/Models/GLB format/race.glb', length: 4.1, label: 'Comet RS' },
-  bulldozer: { file: 'car-kit/Models/GLB format/truck.glb', length: 5.2, label: 'Bulldozer V8' },
-  ghost1: { file: 'car-kit/Models/GLB format/hatchback-sports.glb', length: 4.1 },
-  ghost2: { file: 'car-kit/Models/GLB format/suv-luxury.glb', length: 4.9 },
-  ghost3: { file: 'car-kit/Models/GLB format/kart-oobi.glb', length: 2.4 },
-  ghost4: { file: 'car-kit/Models/GLB format/race-future.glb', length: 4.2 },
-  ghost5: { file: 'car-kit/Models/GLB format/taxi.glb', length: 4.4 },
-  ghost6: { file: 'car-kit/Models/GLB format/van.glb', length: 5 },
-};
+/**
+ * The cars are built procedurally (see car.js), so there are no car models
+ * to download. The entry stays for the ghosts, which pick a shape.
+ * @type {Record<string, CarAssetSpec>}
+ */
+export const CAR_ASSETS = {};
 
 /**
  * @typedef {object} PropAssetSpec
@@ -72,18 +66,105 @@ export const PROP_ASSETS = {
 };
 
 /**
+ * The palette of the scenery.
+ *
+ * The source models use a bright stylised palette (teal leaves, orange bark),
+ * so every prop is re-tinted into a natural one: foliage green, brown wood
+ * and grey rock.
+ */
+export const PROP_TINTS = {
+  treeOak: { foliage: '#5a8a41', wood: '#7a583a' },
+  tree: { foliage: '#4a7a35', wood: '#6f4f33' },
+  treePine: { foliage: '#376a42', wood: '#63462e' },
+  treePineShort: { foliage: '#3c7146', wood: '#63462e' },
+  treePalm: { foliage: '#4a8446', wood: '#8a6a44' },
+  bush: { foliage: '#5e8c44', wood: '#6f4f33' },
+  bushSmall: { foliage: '#67964a', wood: '#6f4f33' },
+  grass: { foliage: '#7aa654', wood: '#7aa654' },
+  rock: { foliage: '#989ba2', wood: '#878a91' },
+  rockSmall: { foliage: '#9ea1a8', wood: '#8d9097' },
+  stump: { foliage: '#7a583a', wood: '#7a583a' },
+  log: { foliage: '#7a583a', wood: '#7a583a' },
+  cactus: { foliage: '#568a4b', wood: '#568a4b' },
+};
+
+/**
+ * @param {THREE.Material} material
+ * @param {{ foliage?: string, wood?: string } | null} tints
+ * @returns {THREE.Color | null}
+ */
+function tintFor(material, tints) {
+  if (!tints) return null;
+  const color = /** @type {any} */ (material)?.color;
+  if (!color) return null;
+  // The teal foliage is the only material with more green than red.
+  const foliage = color.g >= color.r;
+  const hex = foliage ? tints.foliage : tints.wood;
+  return hex ? new THREE.Color(hex) : null;
+}
+
+/**
+ * Re-tint a whole scene: every mesh gets the colour of its material group.
+ *
+ * @param {THREE.Object3D} root
+ * @param {{ foliage?: string, wood?: string } | null} tints
+ */
+function tintScene(root, tints) {
+  if (!tints) return;
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    const material = object.material;
+    if (Array.isArray(material)) return;
+    const tint = tintFor(material, tints);
+    if (!tint) return;
+    // The geometry is cloned: the source scene is shared with the props and
+    // it must not be changed underneath them.
+    const geometry = object.geometry.clone();
+    const count = geometry.getAttribute('position')?.count ?? 0;
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      colors[i * 3] = tint.r;
+      colors[i * 3 + 1] = tint.g;
+      colors[i * 3 + 2] = tint.b;
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    object.geometry = geometry;
+    // The clone shares the materials with the source, so they are copied
+    // before they are changed.
+    const own = material.clone();
+    own.color = new THREE.Color(0xffffff);
+    own.vertexColors = true;
+    // The models use a palette texture: the tint is the final colour, so
+    // the texture has to go or it would darken everything twice.
+    own.map = null;
+    own.needsUpdate = true;
+    object.material = own;
+  });
+}
+
+/**
  * @param {THREE.BufferGeometry} geometry
  * @param {THREE.Material | THREE.Material[]} material
+ * @param {THREE.Color | null} [tint]
  * @returns {THREE.BufferGeometry}
  */
-function normalizeGeometry(geometry, material) {
+function normalizeGeometry(geometry, material, tint = null) {
   const clone = geometry.clone();
   clone.applyMatrix4(geometry.userData?.worldMatrix ?? new THREE.Matrix4());
   if (!clone.getAttribute('normal')) clone.computeVertexNormals();
 
   // Every merged geometry needs the same set of attributes.
   const count = clone.getAttribute('position').count;
-  if (!clone.getAttribute('color')) {
+  if (tint) {
+    // The tint replaces the colour of the model completely.
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      colors[i * 3] = tint.r;
+      colors[i * 3 + 1] = tint.g;
+      colors[i * 3 + 2] = tint.b;
+    }
+    clone.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  } else if (!clone.getAttribute('color')) {
     const materialColor = new THREE.Color(0xffffff);
     if (Array.isArray(material) && material[0]?.color) materialColor.copy(material[0].color);
     else if (!Array.isArray(material) && /** @type {any} */ (material)?.color) materialColor.copy(/** @type {any} */ (material).color);
@@ -161,9 +242,10 @@ function normalizeScene(root, targetHeight, length) {
 /**
  * Merge a model into one geometry per material so it can be instanced.
  * @param {THREE.Object3D} root
+ * @param {{ foliage?: string, wood?: string } | null} [tints]
  * @returns {{ geometry: THREE.BufferGeometry, material: THREE.Material }[]}
  */
-function mergeByMaterial(root) {
+function mergeByMaterial(root, tints = null) {
   /** @type {Map<string, { material: THREE.Material, parts: THREE.BufferGeometry[] }>} */
   const groups = new Map();
   root.updateMatrixWorld(true);
@@ -174,9 +256,11 @@ function mergeByMaterial(root) {
     if (!groups.has(key)) {
       groups.set(key, { material: Array.isArray(material) ? material[0] : material, parts: [] });
     }
-    const geometry = normalizeGeometry(object.geometry, material);
+    const group = groups.get(key);
+    const tint = tintFor(group.material, tints);
+    const geometry = normalizeGeometry(object.geometry, group.material, tint);
     geometry.applyMatrix4(object.matrixWorld);
-    groups.get(key).parts.push(geometry);
+    group.parts.push(geometry);
   });
 
   const result = [];
@@ -188,6 +272,13 @@ function mergeByMaterial(root) {
     const material = group.material?.clone?.() ?? new THREE.MeshStandardMaterial({ color: 0xffffff });
     material.roughness = 0.85;
     material.metalness = 0.02;
+    // The tint lives in the vertex colours, so the material stays white.
+    if (tints) {
+      material.color = new THREE.Color(0xffffff);
+      material.vertexColors = true;
+      // The models use a palette texture: the tint is the final colour.
+      material.map = null;
+    }
     if (material.map) material.map.colorSpace = THREE.SRGBColorSpace;
     result.push({ geometry: merged, material });
   }
@@ -234,7 +325,7 @@ export function createAssetLibrary() {
     const scene = await loadScene(key, spec.file);
     const clone = scene.clone(true);
     normalizeScene(clone, spec.height);
-    const groups = mergeByMaterial(clone);
+    const groups = mergeByMaterial(clone, PROP_TINTS[key] ?? null);
     return { groups };
   }
 
@@ -366,6 +457,12 @@ export function createAssetLibrary() {
       const size = options.size ?? 192;
       const preview = new THREE.Scene();
       const clone = source.clone(true);
+      // The source models use a teal palette, so they are re-tinted before
+      // they are baked into the billboard.
+      tintScene(clone, PROP_TINTS[key] ?? null);
+      // The billboard has the size of the real thing, so the trees stand on
+      // the ground like the models do.
+      normalizeScene(clone, PROP_ASSETS[key]?.height ?? 0);
       preview.add(clone);
       const box = new THREE.Box3().setFromObject(clone);
       const dimensions = new THREE.Vector3();
@@ -398,13 +495,16 @@ export function createAssetLibrary() {
       camera.lookAt(centre);
       const previousTarget = renderer.getRenderTarget();
       const previousClear = renderer.getClearColor(new THREE.Color());
+      const previousAlpha = renderer.getClearAlpha();
+      // The colour space has to be set before the render: the renderer writes
+      // sRGB into the target, and the shader reads it back as sRGB.
+      target.texture.colorSpace = THREE.SRGBColorSpace;
       renderer.setRenderTarget(target);
       renderer.setClearColor(0x000000, 0);
       renderer.clear();
       renderer.render(preview, camera);
       renderer.setRenderTarget(previousTarget);
-      renderer.setClearColor(previousClear, 0);
-      target.texture.colorSpace = THREE.SRGBColorSpace;
+      renderer.setClearColor(previousClear, previousAlpha);
 
       const geometry = createImpostorGeometry(dimensions.x, dimensions.y);
       const material = new THREE.MeshStandardMaterial({

@@ -7,11 +7,12 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
+import { createPost } from './post.js';
 
 const QUALITY_PRESETS = {
-  low: { pixelRatio: 0.75, maxPixelRatio: 1, antialias: false, fogEnd: 380 },
-  medium: { pixelRatio: 1, maxPixelRatio: 1.4, antialias: false, fogEnd: 520 },
-  high: { pixelRatio: 1.4, maxPixelRatio: 2, antialias: true, fogEnd: 760 },
+  low: { pixelRatio: 0.75, maxPixelRatio: 1, antialias: false, fogEnd: 380, post: false },
+  medium: { pixelRatio: 1, maxPixelRatio: 1.4, antialias: false, fogEnd: 520, post: true },
+  high: { pixelRatio: 1.4, maxPixelRatio: 2, antialias: true, fogEnd: 760, post: true },
 };
 
 /**
@@ -35,6 +36,11 @@ export function createRenderer(canvas, options = {}) {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
   renderer.setClearColor(0x070912, 1);
+  // Shadows are the single biggest visual upgrade the scene has, but they
+  // cost a second pass over the geometry, so they are tied to the quality
+  // preset.
+  renderer.shadowMap.enabled = quality !== 'low';
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const camera = new THREE.PerspectiveCamera(62, 1, 0.25, 5000);
   camera.position.set(0, 3, 0);
@@ -44,6 +50,13 @@ export function createRenderer(canvas, options = {}) {
   let pixelRatio = Math.min(preset.pixelRatio, globalThis.devicePixelRatio || 1);
   const maxPixelRatio = Math.min(preset.maxPixelRatio, globalThis.devicePixelRatio || 1);
   let autoQuality = options.autoQuality !== false;
+
+  const post = createPost({
+    width: 1,
+    height: 1,
+    pixelRatio: 1,
+    enabled: preset.post !== false,
+  });
 
   let frameAccum = 0;
   let frameCount = 0;
@@ -62,6 +75,7 @@ export function createRenderer(canvas, options = {}) {
     // Keep a consistent vertical field of view on very wide or tall screens.
     camera.fov = camera.aspect < 1 ? 74 : 62;
     camera.updateProjectionMatrix();
+    post.setSize(width, height, pixelRatio);
     return true;
   }
 
@@ -125,7 +139,7 @@ export function createRenderer(canvas, options = {}) {
      */
     render(scene, cameraState) {
       applyCamera(cameraState);
-      renderer.render(scene, camera);
+      post.render(renderer, scene, camera);
     },
     /**
      * @param {string} value
@@ -137,10 +151,22 @@ export function createRenderer(canvas, options = {}) {
       pixelRatio = Math.min(next.pixelRatio, maxPixelRatio);
       renderer.setPixelRatio(pixelRatio);
       renderer.setSize(width, height, false);
+      renderer.shadowMap.enabled = value !== 'low';
+      // Everything has to be marked for a new shadow pass.
+      renderer.shadowMap.needsUpdate = true;
+      post.setEnabled(next.post !== false);
+      post.setSize(width, height, pixelRatio);
     },
     /** @param {boolean} value */
     setAutoQuality(value) {
       autoQuality = value;
+    },
+    /**
+     * The tone mapping exposure, driven by the day and night palettes.
+     * @param {number} value
+     */
+    setExposure(value) {
+      renderer.toneMappingExposure = value;
     },
     /** @returns {number} */
     get pixelRatio() {
@@ -151,6 +177,7 @@ export function createRenderer(canvas, options = {}) {
       return { width, height };
     },
     dispose() {
+      post.dispose();
       renderer.dispose();
     },
   };

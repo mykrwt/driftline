@@ -40,6 +40,10 @@
         <span class="hud__label">Distance</span>
         <span class="hud__value" id="hud-distance">0.00 km</span>
       </div>
+      <div class="hud__chip hud__chip--best">
+        <span class="hud__label">Best drift</span>
+        <span class="hud__value" id="hud-best">0</span>
+      </div>
       <div class="hud__chip hud__chip--net" id="hud-net-chip" hidden>
         <span class="hud__dot" id="hud-net-dot"></span>
         <span class="hud__value" id="hud-net">--</span>
@@ -70,15 +74,15 @@
           <span class="speedo__value" id="hud-speed">0</span>
           <span class="speedo__unit" id="hud-speed-unit">km/h</span>
         </div>
+        <div class="speedo__gear" id="hud-gear">1</div>
       </div>
       <div class="boost">
         <div class="boost__label">Boost</div>
         <div class="boost__bar"><div class="boost__fill" id="boost-fill"></div></div>
       </div>
     </div>
+    <div class="hud__popups" id="hud-popups" aria-live="polite"></div>
   </div>
-
-  <!-- ===================== TOUCH CONTROLS ===================== -->
   <div id="touch" class="touch" hidden>
     <div class="touch__steer" id="touch-steer" role="slider" aria-label="Steering" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0" tabindex="0">
       <div class="touch__steer-track"></div>
@@ -110,6 +114,10 @@
       <div class="picker">
         <span class="picker__label">Car</span>
         <div class="picker__row" id="car-picker" role="radiogroup" aria-label="Choose a car"></div>
+      </div>
+      <div class="picker">
+        <span class="picker__label">Time of day</span>
+        <div class="picker__row" id="palette-picker" role="radiogroup" aria-label="Choose the time of day"></div>
       </div>
     </div>
     <p class="hint">Keyboard: arrows/WASD drive · Space handbrake · Shift boost · R respawn · Esc pause</p>

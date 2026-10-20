@@ -15,6 +15,8 @@ import { createHud } from './game/hud.js';
 import { createWorld } from './game/world.js';
 import { createRenderer } from './game/renderer.js';
 import { createAssetLibrary } from './game/assets.js';
+import { createSelfTest } from './game/selftest.js';
+import { PALETTES } from './game/palette.js';
 import { createSession } from './net/session.js';
 
 const doc = globalThis.document;
@@ -80,8 +82,12 @@ let session = null;
 /** @type {'menu' | 'racing' | 'paused'} */
 let phase = 'menu';
 let lastHudUpdate = 0;
+let lastDrift = 0;
+let nextMilestone = 500;
 let peerScores = [];
 let worldSeed = (Math.random() * 0xffffff) | 0;
+/** The palette the running world is using. */
+let appliedPalette = settings.palette;
 
 const menus = createMenus({
   settings,
@@ -133,9 +139,15 @@ const menus = createMenus({
     quitToMenu();
   },
   onSettingsChange: (next) => {
+    const paletteChanged = next.palette !== appliedPalette;
     Object.assign(settings, next);
     saveState({ settings, records });
     applySettings();
+    // The time of day can be changed while driving.
+    if (paletteChanged) {
+      appliedPalette = next.palette;
+      world?.setPalette(PALETTES[settings.palette] ?? PALETTES.alpine);
+    }
   },
   onCopy: (text) => {
     void copyText(text, 'Invite code copied');
@@ -174,10 +186,12 @@ function startRace(config) {
     renderer,
     seed: config.seed ?? worldSeed,
     carId: settings.car,
+    palette: PALETTES[settings.palette] ?? PALETTES.alpine,
     quality: { quality: settings.quality, autoQuality: settings.autoQuality },
   });
 
   world.on('respawn', () => hud.flash());
+  appliedPalette = settings.palette;
 
   menus.hideAll();
   hud.show();
@@ -191,6 +205,201 @@ function disposeWorld() {
   if (!world) return;
   world.dispose();
   world = null;
+}
+
+/**
+ * Grab the current frame and hand it to the dev server.
+ *
+ * The renderer only keeps the drawing buffer alive when the page is opened
+ * with `?capture=1`, so this is a no-op that returns false elsewhere.
+ *
+ * @param {string} name
+ * @param {{ width?: number, quality?: number }} [options]
+ * @returns {Promise<boolean>}
+ */
+async function captureFrame(name, options = {}) {
+  try {
+    const data = encodeCanvas(canvas, options);
+    const res = await fetch(`/__shot?name=${encodeURIComponent(name)}&ext=jpg`, { method: 'POST', body: data });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Encode the canvas as a JPEG.
+ *
+ * The frame is scaled down first: a full size canvas takes seconds to
+ * encode on a phone and the WebView does not like it.
+ *
+ * @param {HTMLCanvasElement} canvas
+ * @param {{ width?: number, quality?: number }} [options]
+ * @returns {string}
+ */
+function encodeCanvas(canvas, options = {}) {
+  const maxWidth = options.width ?? 560;
+  const quality = options.quality ?? 0.82;
+  const scale = Math.min(1, maxWidth / (canvas.width || maxWidth));
+  if (scale >= 1) return canvas.toDataURL('image/jpeg', quality);
+  const scratch = doc.createElement('canvas');
+  scratch.width = Math.round(canvas.width * scale);
+  scratch.height = Math.round(canvas.height * scale);
+  const ctx = scratch.getContext('2d');
+  ctx.drawImage(canvas, 0, 0, scratch.width, scratch.height);
+  return scratch.toDataURL('image/jpeg', quality);
+}
+
+/**
+ * Capture a series of frames while the bot drives.
+ * @param {{ count?: number, interval?: number, prefix?: string }} [options]
+ * @returns {Promise<string[]>}
+ */
+async function captureSequence(options = {}) {
+  const count = options.count ?? 8;
+  const interval = options.interval ?? 700;
+  const prefix = options.prefix ?? 'frame';
+  const names = [];
+  for (let i = 0; i < count; i++) {
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, interval));
+    const name = `${prefix}-${String(i).padStart(2, '0')}`;
+    if (await captureFrame(name)) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Run the simulation without the animation frame loop and grab frames along
+ * the way.
+ *
+ * The in-app browser throttles `requestAnimationFrame` when the page is not
+ * visible, so the capture tool drives the world itself: it steps the physics
+ * at a fixed rate, renders and stores a frame every few steps. The result is
+ * a deterministic "video" of the drive.
+ *
+ * @param {{ seconds?: number, fps?: number, every?: number, prefix?: string, quality?: number, autoplay?: boolean }} [options]
+ * @returns {Promise<string[]>}
+ */
+async function simulate(options = {}) {
+  if (!world) return [];
+  const seconds = options.seconds ?? 8;
+  const fps = options.fps ?? 24;
+  const every = options.every ?? 6;
+  const prefix = options.prefix ?? 'sim';
+  const quality = options.quality ?? 0.82;
+  const width = options.width ?? 560;
+  const step = 1 / 60;
+  const steps = Math.max(1, Math.round(seconds * 60));
+  const names = [];
+
+  const wasRunning = loop.running;
+  loop.stop();
+  if (options.autoplay !== false) world.setAutopilot(true);
+
+  for (let i = 0; i < steps; i++) {
+    world.update(step);
+    if (i % every === 0) {
+      world.render(step);
+      const name = `${prefix}-${String(names.length).padStart(3, '0')}`;
+      try {
+        const data = encodeCanvas(canvas, { width, quality });
+        const res = await fetch(`/__shot?name=${encodeURIComponent(name)}&ext=jpg`, {
+          method: 'POST',
+          body: data,
+        });
+        if (res.ok) names.push(name);
+      } catch {
+        /* keep going */
+      }
+      if (names.length % 4 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  if (wasRunning) loop.start();
+  return names;
+}
+
+/**
+ * Put the current frame on top of the page as an image.
+ *
+ * The in-app browser cannot screenshot a WebGL canvas, and posting the frame
+ * to the dev server needs a working network. Drawing the canvas into a 2D
+ * canvas and showing it as an image works in every case, so the harness can
+ * take a screenshot of the actual game.
+ *
+ * @returns {boolean}
+ */
+function snapToScreen() {
+  try {
+    const scratch = doc.createElement('canvas');
+    const width = Math.min(900, canvas.width || 900);
+    scratch.width = width;
+    scratch.height = Math.round((width * (canvas.height || 1)) / (canvas.width || 1));
+    const ctx = scratch.getContext('2d');
+    ctx.drawImage(canvas, 0, 0, scratch.width, scratch.height);
+    const url = scratch.toDataURL('image/jpeg', 0.86);
+    let image = doc.getElementById('__snap');
+    if (!image) {
+      image = doc.createElement('img');
+      image.id = '__snap';
+      image.style.cssText =
+        'position:fixed;left:0;top:0;width:100%;height:100%;z-index:99999;object-fit:contain;background:#000';
+      doc.body.appendChild(image);
+    }
+    image.src = url;
+    return true;
+  } catch (err) {
+    console.error('[driftline] snapshot failed', err);
+    return false;
+  }
+}
+
+/**
+ * Build a contact sheet from the captured frames so a whole drive can be
+ * reviewed in one image.
+ * @param {string[]} names
+ * @param {{ cols?: number, width?: number, prefix?: string, tileHeight?: number }} [options]
+ * @returns {Promise<string | null>}
+ */
+async function contactSheet(names, options = {}) {
+  const cols = options.cols ?? 4;
+  const tileWidth = options.width ?? 420;
+  const prefix = options.prefix ?? 'sheet';
+  if (!names.length) return null;
+
+  const tiles = [];
+  for (const name of names) {
+    const image = new Image();
+    image.src = `/.harness/shots/${name}.jpg`;
+    try {
+      await image.decode();
+    } catch {
+      continue;
+    }
+    tiles.push(image);
+  }
+  if (!tiles.length) return null;
+
+  const tileHeight = Math.round((tileWidth * tiles[0].height) / tiles[0].width);
+  const rows = Math.ceil(tiles.length / cols);
+  const sheet = doc.createElement('canvas');
+  sheet.width = cols * tileWidth;
+  sheet.height = rows * tileHeight;
+  const ctx = sheet.getContext('2d');
+  ctx.fillStyle = '#05070d';
+  ctx.fillRect(0, 0, sheet.width, sheet.height);
+  tiles.forEach((image, index) => {
+    const x = (index % cols) * tileWidth;
+    const y = Math.floor(index / cols) * tileHeight;
+    ctx.drawImage(image, x, y, tileWidth, tileHeight);
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.strokeRect(x + 0.5, y + 0.5, tileWidth - 1, tileHeight - 1);
+  });
+  const data = sheet.toDataURL('image/jpeg', 0.9);
+  const res = await fetch(`/__shot?name=${encodeURIComponent(prefix)}&ext=jpg`, {
+    method: 'POST',
+    body: data,
+  });
+  return res.ok ? prefix : null;
 }
 
 function pauseRace() {
@@ -362,15 +571,45 @@ const loop = createLoop({
     if (now - lastHudUpdate > 60) {
       lastHudUpdate = now;
       const status = world.status;
+      const vehicle = world.vehicle;
       hud.update({
         speed: status.speed,
         kmh: status.kmh,
         drift: status.drift,
         multiplier: status.multiplier,
-        drifting: world.vehicle.drifting,
+        drifting: vehicle.drifting,
         boost: status.boost,
         distance: status.s,
+        gear: vehicle.gear,
+        best: vehicle.bestDrift,
       });
+      // A finished drift is worth a little celebration.
+      if (lastDrift > 0 && status.drift === 0 && vehicle.bestDrift > 0) {
+        const points = Math.round(vehicle.bestDrift);
+        const tier = points > 4000 ? 'great' : 'good';
+        hud.popup(
+          points > 4000 ? 'Perfect drift' : 'Drift',
+          `+${points.toLocaleString()}`,
+          tier,
+        );
+        if (points > (records.bestDriftRun ?? 0)) {
+          records.bestDriftRun = points;
+          saveState({ settings, records });
+        }
+      }
+      lastDrift = status.drift;
+
+      // Distance milestones, and the record of the longest drive.
+      const metres = Math.floor(status.s);
+      if (metres >= nextMilestone) {
+        nextMilestone = metres + 500;
+        const km = metres / 1000;
+        hud.popup(km >= 1 ? `${km.toFixed(1)} km` : `${metres} m`, 'Keep going', 'great');
+      }
+      if (metres > (records.bestDistance ?? 0)) {
+        records.bestDistance = metres;
+        saveState({ settings, records });
+      }
       updateStandings();
     }
     if (perfEl && settings.showFps) {
@@ -490,4 +729,23 @@ globalThis.__driftline = {
   input,
   audio,
   loop,
+  capture: captureFrame,
+  captureSequence,
+  simulate,
+  contactSheet,
+  snap: snapToScreen,
+  selftest: createSelfTest({
+    get world() {
+      return world;
+    },
+    get input() {
+      return input;
+    },
+  }),
+  /**
+   * @param {boolean} value
+   */
+  setAutopilot(value) {
+    world?.setAutopilot(value);
+  },
 };

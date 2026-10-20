@@ -10,6 +10,7 @@ import { createAudio } from './game/audio.js';
 import { createMenus } from './game/menus.js';
 import { createHud } from './game/hud.js';
 import { createWorld } from './game/world.js';
+import { createAssetLibrary } from './game/assets.js';
 import { createSession } from './net/session.js';
 import { TRACKS, getTrackDef } from './game/track.js';
 import { formatScore } from './core/math.js';
@@ -45,6 +46,8 @@ const identity = DRIVER_COLORS[Math.floor(Math.random() * DRIVER_COLORS.length)]
 const audio = createAudio();
 audio.setVolume(settings.volume);
 audio.setMuted(settings.muted);
+
+const assets = createAssetLibrary();
 
 const input = createInput({
   steerElement: doc.getElementById('touch-steer'),
@@ -173,6 +176,7 @@ function startRace(config) {
     canvas,
     input,
     audio,
+    assets,
     trackId: config.trackId ?? settings.track,
     seed: config.seed,
     carId: settings.car,
@@ -542,6 +546,7 @@ globalThis.__driftline = {
   get world() {
     return world;
   },
+  assets,
   get phase() {
     return phase;
   },

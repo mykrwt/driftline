@@ -1,11 +1,15 @@
 /**
  * Driftline service worker.
  *
- * Caches the app shell so the game keeps working offline. The vendor bundle is
- * cached forever, the game files use a stale-while-revalidate strategy.
+ * Strategy:
+ *   - app code (html/js/css): network first, so a new deploy is picked up
+ *     immediately, with the cache as an offline fallback.
+ *   - big immutable files (models, vendor bundle): cache first.
+ *
+ * The cache name carries a version, so a new deploy drops the old cache.
  */
 
-const VERSION = 'driftline-v1';
+const VERSION = 'driftline-v2';
 const CORE = [
   './',
   './index.html',
@@ -14,8 +18,6 @@ const CORE = [
   './assets/icon-maskable.svg',
   './styles/base.css',
   './styles/game.css',
-  './vendor/three/three.module.js',
-  './vendor/three/three.core.js',
   './src/main.js',
   './src/core/math.js',
   './src/core/rng.js',
@@ -33,10 +35,17 @@ const CORE = [
   './src/game/hud.js',
   './src/game/menus.js',
   './src/game/world.js',
+  './src/game/race.js',
+  './src/game/assets.js',
   './src/net/protocol.js',
   './src/net/signal.js',
   './src/net/peer.js',
   './src/net/session.js',
+  './vendor/three/three.module.js',
+  './vendor/three/three.core.js',
+  './vendor/three/addons/loaders/GLTFLoader.js',
+  './vendor/three/addons/utils/BufferGeometryUtils.js',
+  './vendor/three/addons/utils/SkeletonUtils.js',
 ];
 
 self.addEventListener('install', (event) => {
@@ -44,8 +53,8 @@ self.addEventListener('install', (event) => {
     caches
       .open(VERSION)
       .then((cache) => cache.addAll(CORE))
-      .then(() => self.skipWaiting())
-      .catch(() => self.skipWaiting()),
+      .catch(() => undefined)
+      .then(() => self.skipWaiting()),
   );
 });
 
@@ -64,18 +73,37 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      const network = fetch(request)
+  const isAppCode = /\.(?:html|js|css|webmanifest)$/.test(url.pathname);
+
+  if (isAppCode) {
+    // Network first: always try to serve the newest build.
+    event.respondWith(
+      fetch(request)
         .then((response) => {
           if (response && response.status === 200) {
             const copy = response.clone();
-            caches.open(VERSION).then((cache) => cache.put(request, copy)).catch(() => {});
+            caches.open(VERSION).then((cache) => cache.put(request, copy)).catch(() => undefined);
+          }
+          return response;
+        })
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('./index.html'))),
+    );
+    return;
+  }
+
+  // Cache first for the heavy immutable files.
+  event.respondWith(
+    caches.match(request).then((cached) => {
+      if (cached) return cached;
+      return fetch(request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const copy = response.clone();
+            caches.open(VERSION).then((cache) => cache.put(request, copy)).catch(() => undefined);
           }
           return response;
         })
         .catch(() => cached);
-      return cached || network;
     }),
   );
 });

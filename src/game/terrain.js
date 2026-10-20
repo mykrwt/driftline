@@ -17,6 +17,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { roadOffset, roadHalfWidth, roadHeight, surfaceHeight } from './road.js';
 import { groundColour } from './palette.js';
+import { WATER_DROP } from './water.js';
 import { fbm } from './noise.js';
 
 /** How long a terrain chunk is along the road, in metres. */
@@ -207,10 +208,74 @@ export function createTerrainManager(options) {
     mesh.matrixAutoUpdate = false;
     group.add(mesh);
 
+    // The lakes: the same ribbon, but below the ground, so only the parts
+    // that are actually under water are drawn.
+    const water = buildWater(startS, rows, step, heights, laterals, centres);
+    if (water) group.add(water);
+
     addScenery(group, index, startS, rows, step);
 
     scene.add(group);
     chunks.set(index, { group, mesh });
+  }
+
+  /**
+   * Build the water surface of a chunk.
+   *
+   * The surface sits a fixed distance below the road, so the low parts of
+   * the valley fill up and the road never gets flooded.
+   *
+   * @param {number} startS
+   * @param {number} rows
+   * @param {number} step
+   * @param {Float32Array} heights
+   * @param {Float32Array} laterals
+   * @param {Float32Array} centres
+   * @returns {THREE.Mesh | null}
+   */
+  function buildWater(startS, rows, step, heights, laterals, centres) {
+    if (!options.waterMaterial) return null;
+    const columns = TERRAIN_COLUMNS.length * 2 - 1;
+    const limit = columns;
+    const positions = [];
+    const depths = [];
+    const indices = [];
+    let any = false;
+
+    for (let r = 0; r < rows; r++) {
+      const s = startS + r * step;
+      const centre = centres[r];
+      const level = roadHeight(profile, s) - WATER_DROP;
+      for (let c = 0; c < limit; c++) {
+        const i = r * columns + c;
+        const lateral = laterals[i];
+        const ground = heights[i];
+        const depth = level - ground;
+        if (depth > 0.05) any = true;
+        positions.push(centre + lateral, level, s);
+        depths.push(depth);
+      }
+    }
+    if (!any) return null;
+
+    for (let r = 0; r < rows - 1; r++) {
+      for (let c = 0; c < limit - 1; c++) {
+        const a = r * limit + c;
+        const b = (r + 1) * limit + c;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('aDepth', new THREE.Float32BufferAttribute(depths, 1));
+    geometry.setIndex(indices);
+    geometry.computeBoundingSphere();
+
+    const mesh = new THREE.Mesh(geometry, options.waterMaterial);
+    mesh.renderOrder = 1;
+    mesh.matrixAutoUpdate = false;
+    return mesh;
   }
 
   /**

@@ -275,6 +275,12 @@ export function terrainRelief(profile, s, lateral) {
   // Rolling ground that reaches almost to the verge.
   const roll = fbm(x * 0.0085, s * 0.0085, 3, seed + 71) * 4.6 * smoothstep(clamp((dist - 4) / 20, 0, 1));
 
+  // Basins: in places the valley floor drops away from the road and fills
+  // with water. The drop is gentle, so the road runs along the rim.
+  const basinNoise = fbm(x * 0.0014, s * 0.0014, 2, seed + 401);
+  const basinDepth = Math.max(0, basinNoise - 0.08) * 130;
+  const basin = -basinDepth * smoothstep(clamp((dist - 14) / 75, 0, 1));
+
   // Mid scale relief: this is what makes the slopes read as land instead of
   // a smooth ramp once the sun rakes across them.
   const crags = fbm(x * 0.019, s * 0.019, 3, seed + 233) * 5.4 * away;
@@ -283,7 +289,7 @@ export function terrainRelief(profile, s, lateral) {
   // Fine bumps so the surface never reads as a smooth sheet.
   const detail = fbm(x * 0.085, s * 0.085, 2, seed + 131) * 0.85 * smoothstep(clamp(dist / 6, 0, 1));
 
-  return valley + peaks + peaks2 + shoulders + roll + crags + rubble + detail;
+  return valley + peaks + peaks2 + shoulders + roll + basin + crags + rubble + detail;
 }
 
 /**

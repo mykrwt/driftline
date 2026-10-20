@@ -11,6 +11,7 @@ import { createChunkManager } from './chunks.js';
 import { createTerrainManager } from './terrain.js';
 import { roadHeight } from './road.js';
 import { PALETTES } from './palette.js';
+import { createWaterMaterial } from './water.js';
 
 /**
  * @param {import('./road.js').RoadProfile} profile
@@ -231,6 +232,22 @@ export function createWorldScene(profile, options) {
     return impostor;
   };
 
+  // The lakes in the valley.
+  const water = createWaterMaterial({
+    fog: palette.fog,
+    sky: palette.skyHorizon,
+    deep: palette.waterDeep ?? '#17475f',
+    shallow: palette.waterShallow ?? '#3d8ba4',
+    sun: palette.sun,
+    sunDirection: new THREE.Vector3(
+      palette.sunX * 2 - 1,
+      palette.sunY * 1.6 + 0.25,
+      -0.55,
+    ).normalize(),
+  });
+  water.uniforms.uFogNear.value = palette.fogStart;
+  water.uniforms.uFogFar.value = palette.fogEnd;
+
   const terrain = createTerrainManager({
     profile,
     scene,
@@ -238,6 +255,7 @@ export function createWorldScene(profile, options) {
     terrainMaterial,
     assets: options.assets,
     getImpostor,
+    waterMaterial: water.material,
   });
 
   return {
@@ -263,6 +281,10 @@ export function createWorldScene(profile, options) {
       skyUniforms.sunColor.value = new THREE.Color(palette.sun);
       skyUniforms.stars.value = palette.starAlpha;
       skyUniforms.cloudAmount.value = palette.cloud;
+      water.uniforms.uSky.value = new THREE.Color(palette.skyHorizon);
+      water.uniforms.uFogColor.value = new THREE.Color(palette.fog);
+      water.uniforms.uFogNear.value = palette.fogStart;
+      water.uniforms.uFogFar.value = palette.fogEnd;
       sun.color = new THREE.Color(palette.sun);
       sun.intensity = palette.sunIntensity;
       hemi.color = new THREE.Color(palette.skyHorizon);
@@ -279,6 +301,7 @@ export function createWorldScene(profile, options) {
     update(playerS, playerX, playerZ, elapsed = 0) {
       chunks.update(playerS);
       terrain.update(playerS);
+      water.update(elapsed);
       sky.position.set(playerX, 0, playerZ);
       skyUniforms.time.value = elapsed;
       // Keep the shadow frustum around the player.
@@ -295,6 +318,7 @@ export function createWorldScene(profile, options) {
     dispose() {
       chunks.dispose();
       terrain.dispose();
+      water.dispose();
       roadTexture.dispose();
       roadMaterial.dispose();
       terrainMaterial.dispose();

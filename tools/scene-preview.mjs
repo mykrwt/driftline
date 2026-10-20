@@ -18,6 +18,8 @@ import {
   roadHalfWidth,
   surfaceHeight,
 } from '../src/game/road.js';
+
+const WATER_DROP = 9;
 import { groundColour, PALETTES } from '../src/game/palette.js';
 import { fbm } from '../src/game/noise.js';
 
@@ -204,6 +206,7 @@ for (let py = 0; py < HEIGHT; py++) {
     // --- march the ray --------------------------------------------------
     let t = 1.2;
     let hit = false;
+    let waterHit = false;
     let hitX = 0;
     let hitY = 0;
     let hitZ = 0;
@@ -214,7 +217,17 @@ for (let py = 0; py < HEIGHT; py++) {
       const x = camX + dx * t;
       const y = camY + dy * t;
       const z = camZ + dz * t;
-      const diff = y - groundAt(x, z);
+      const ground = groundAt(x, z);
+      const level = roadHeight(profile, z) - WATER_DROP;
+      if (!waterHit && y < level && level < ground) {
+        waterHit = true;
+        hit = true;
+        hitX = x;
+        hitY = level;
+        hitZ = z;
+        break;
+      }
+      const diff = y - ground;
       if (diff <= 0) {
         // Refine the crossing.
         let low = t - step;
@@ -260,6 +273,31 @@ for (let py = 0; py < HEIGHT; py++) {
       rgb[index] = toSrgb(aces(skyColour[0] * palette.exposure)) * 255;
       rgb[index + 1] = toSrgb(aces(skyColour[1] * palette.exposure)) * 255;
       rgb[index + 2] = toSrgb(aces(skyColour[2] * palette.exposure)) * 255;
+      continue;
+    }
+
+    if (waterHit) {
+      // --- the water ----------------------------------------------------
+      const fres = 0.25 + 0.55 * (1 - Math.abs(dy));
+      const deep = toLinear(hexToRgb('#17475f'));
+      const sky = toLinear(hexToRgb(palette.skyHorizon));
+      const sun = toLinear(hexToRgb(palette.sun));
+      const spec = Math.pow(Math.max(0, dy * 0.8 + sunDir[1] * 0.6), 24) * 0.9;
+      let r = deep[0] * (0.55 + 0.45 * palette.hemiIntensity) + sky[0] * fres;
+      let g = deep[1] * (0.55 + 0.45 * palette.hemiIntensity) + sky[1] * fres;
+      let b = deep[2] * (0.55 + 0.45 * palette.hemiIntensity) + sky[2] * fres;
+      r += sun[0] * spec;
+      g += sun[1] * spec;
+      b += sun[2] * spec;
+      const fogAmount = Math.max(0, Math.min(1, (t - palette.fogStart) / (palette.fogEnd - palette.fogStart)));
+      const fogMix = fogAmount * fogAmount * (3 - 2 * fogAmount);
+      r += (FOG[0] - r) * fogMix;
+      g += (FOG[1] - g) * fogMix;
+      b += (FOG[2] - b) * fogMix;
+      rgb[index] = toSrgb(aces(r * palette.exposure)) * 255;
+      rgb[index + 1] = toSrgb(aces(g * palette.exposure)) * 255;
+      rgb[index + 2] = toSrgb(aces(b * palette.exposure)) * 255;
+      depth[py * WIDTH + px] = t;
       continue;
     }
 

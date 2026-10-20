@@ -76,6 +76,10 @@ and the console gets `__driftline.snap()` (paints the frame over the page),
 `__driftline.simulate({ seconds })` (drives the world with the bot and stores
 the frames on the dev server) and `__driftline.contactSheet(names)`.
 
+`__driftline.selftest()` drives the game from the console: it uses the
+keyboard and the touch controls, drifts, changes the palette and looks for
+errors. It is the quickest way to find out whether a change broke something.
+
 ## Controls
 
 | Action | Keys | Touch |
@@ -100,10 +104,14 @@ On a phone: the steering pad on the left, gas/brake/drift/boost on the right.
   tessellated and the mountains rise out of the valley the road runs through.
   The row spacing grows with the distance, so the vertex count stays flat
   however far you drive.
+- **Lakes.** The valley floor dips below the water line in places, and the
+  water follows the road as a second ribbon, so the lakes appear and
+  disappear along the drive.
 - **One height function.** The mesh and the physics read the same
   `surfaceHeight`, so the wheels always touch the ground.
-- **Layered vegetation**: real low-poly models near the road, with per
-  instance colour variation, all GPU instanced and shadow casting.
+- **Layered vegetation**: the trees are billboards - the model is baked into
+  a texture once and drawn with crossed quads - while the rocks and the
+  bushes stay real models. Everything is GPU instanced and shadow casting.
 - **Sun and shadows**: a directional sun with a tight shadow map that follows
   the car, a hemisphere fill for the shade and a soft contact shadow under
   the car.

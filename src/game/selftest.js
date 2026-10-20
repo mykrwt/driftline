@@ -37,6 +37,7 @@ export function createSelfTest(driftline) {
       for (let i = 0; i < count; i++) {
         driftline.input.update(1 / 60);
         world.update(1 / 60);
+        world.render(1 / 60);
       }
     };
 
@@ -130,12 +131,22 @@ export function createSelfTest(driftline) {
     check('the trees are textured', treeTexture, treeTexture ? 'ok' : 'no texture');
 
     // --- the drift -----------------------------------------------------
-    world.setAutopilot(true);
-    key('Space', 'keydown');
-    step(180);
-    key('Space', 'keyup');
-    check('the car can drift', vehicle.driftScore > 0 || vehicle.slipAngle !== 0, `slip ${vehicle.slipAngle.toFixed(2)}`);
     world.setAutopilot(false);
+    key('ArrowUp', 'keydown');
+    step(150);
+    key('Space', 'keydown');
+    key('ArrowRight', 'keydown');
+    let slip = 0;
+    for (let i = 0; i < 240; i++) {
+      driftline.input.update(1 / 60);
+      world.update(1 / 60);
+      world.render(1 / 60);
+      slip = Math.max(slip, Math.abs(vehicle.slipAngle));
+    }
+    key('Space', 'keyup');
+    key('ArrowRight', 'keyup');
+    key('ArrowUp', 'keyup');
+    check('the car can drift', slip > 0.17, `slip ${slip.toFixed(2)}`);
 
     // --- the palette ---------------------------------------------------
     const beforeLight = world.scene.palette.sunIntensity;

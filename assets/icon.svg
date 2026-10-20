@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141a34"/>
+      <stop offset="1" stop-color="#070912"/>
+    </linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3d47"/>
+      <stop offset="1" stop-color="#23252d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#sky)"/>
+  <path d="M186 512 L232 190 L280 190 L326 512 Z" fill="url(#road)"/>
+  <path d="M244 512 L250 190 L262 190 L268 512 Z" fill="#e9ecf5" opacity="0.85"/>
+  <path d="M186 512 L232 190 L238 190 L196 512 Z" fill="#d23b4a"/>
+  <path d="M326 512 L274 190 L280 190 L334 512 Z" fill="#d23b4a"/>
+  <g transform="translate(256 300)">
+    <path d="M-86 46 L-72 -30 L-44 -52 L44 -52 L72 -30 L86 46 Z" fill="#ff3f6d"/>
+    <path d="M-46 -34 L-36 -66 L36 -66 L46 -34 Z" fill="#16203a"/>
+    <rect x="-72" y="-72" width="144" height="14" rx="6" fill="#22262e"/>
+    <rect x="-60" y="10" width="34" height="12" rx="5" fill="#ff3b52"/>
+    <rect x="26" y="10" width="34" height="12" rx="5" fill="#ff3b52"/>
+    <rect x="-56" y="30" width="112" height="12" rx="5" fill="#22262e"/>
+  </g>
+  <g stroke="#41e0ff" stroke-width="10" stroke-linecap="round" opacity="0.9">
+    <path d="M96 150 C 150 120, 200 190, 256 150"/>
+    <path d="M256 150 C 312 110, 362 180, 416 140"/>
+  </g>
+</svg>

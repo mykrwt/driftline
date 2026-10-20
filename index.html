@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d16" />
+<meta name="description" content="Driftline - a pseudo-3D drift racer for mobile and desktop with serverless peer-to-peer multiplayer." />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>Driftline</title>
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="./styles/base.css?v=1" />
+<link rel="stylesheet" href="./styles/game.css?v=1" />
+</head>
+<body>
+<div id="app" class="app" data-phase="boot">
+
+  <!-- ===================== GAME CANVAS ===================== -->
+  <div class="stage">
+    <canvas id="game" class="stage__canvas" aria-label="Race view"></canvas>
+    <div id="fx-flash" class="fx-flash" aria-hidden="true"></div>
+    <div id="fx-vignette" class="fx-vignette" aria-hidden="true"></div>
+  </div>
+
+  <!-- ===================== HUD ===================== -->
+  <div id="hud" class="hud" aria-hidden="true">
+    <div class="hud__top">
+      <div class="hud__chip hud__chip--lap">
+        <span class="hud__label">Lap</span>
+        <span class="hud__value"><span id="hud-lap">1</span><span class="hud__sub">/</span><span id="hud-laps">2</span></span>
+      </div>
+      <div class="hud__chip hud__chip--time">
+        <span class="hud__label">Time</span>
+        <span class="hud__value" id="hud-time">0:00.00</span>
+      </div>
+      <div class="hud__chip hud__chip--best">
+        <span class="hud__label">Best lap</span>
+        <span class="hud__value" id="hud-best">--:--.--</span>
+      </div>
+      <div class="hud__chip hud__chip--net" id="hud-net-chip" hidden>
+        <span class="hud__dot" id="hud-net-dot"></span>
+        <span class="hud__value" id="hud-net">--</span>
+      </div>
+    </div>
+
+    <div class="hud__left">
+      <canvas id="minimap" class="minimap" width="220" height="220" aria-label="Track map"></canvas>
+      <div class="standings" id="standings"></div>
+    </div>
+
+    <div class="hud__center">
+      <div class="drift-meter" id="drift-meter">
+        <div class="drift-meter__ring" id="drift-ring">
+          <span class="drift-meter__score" id="drift-score">0</span>
+          <span class="drift-meter__mult" id="drift-mult">x1.0</span>
+        </div>
+        <div class="drift-meter__label" id="drift-label">DRIFT</div>
+      </div>
+      <div class="countdown" id="countdown" hidden></div>
+    </div>
+
+    <div class="hud__right">
+      <div class="speedo">
+        <svg viewBox="0 0 120 120" class="speedo__dial" aria-hidden="true">
+          <circle class="speedo__track" cx="60" cy="60" r="52"></circle>
+          <circle class="speedo__fill" id="speedo-fill" cx="60" cy="60" r="52"></circle>
+        </svg>
+        <div class="speedo__readout">
+          <span class="speedo__value" id="hud-speed">0</span>
+          <span class="speedo__unit" id="hud-speed-unit">km/h</span>
+        </div>
+      </div>
+      <div class="boost">
+        <div class="boost__label">Boost</div>
+        <div class="boost__bar"><div class="boost__fill" id="boost-fill"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== TOUCH CONTROLS ===================== -->
+  <div id="touch" class="touch" hidden>
+    <div class="touch__steer" id="touch-steer" role="slider" aria-label="Steering" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0" tabindex="0">
+      <div class="touch__steer-track"></div>
+      <div class="touch__steer-knob" id="touch-knob"></div>
+    </div>
+    <div class="touch__buttons">
+      <button class="tbtn tbtn--hand" id="btn-hand" type="button" aria-label="Handbrake">DRIFT</button>
+      <button class="tbtn tbtn--boost" id="btn-boost" type="button" aria-label="Boost">BOOST</button>
+      <button class="tbtn tbtn--brake" id="btn-brake" type="button" aria-label="Brake">BRAKE</button>
+      <button class="tbtn tbtn--gas" id="btn-gas" type="button" aria-label="Accelerate">GAS</button>
+    </div>
+  </div>
+
+  <!-- ===================== TITLE / MENU ===================== -->
+  <section id="screen-title" class="screen screen--title" hidden>
+    <div class="title-art" aria-hidden="true">
+      <span class="title-art__word">DRIFT</span><span class="title-art__word title-art__word--alt">LINE</span>
+    </div>
+    <p class="tagline">Pseudo-3D drift racing. Mobile + desktop. Peer-to-peer, no backend.</p>
+
+    <div class="menu">
+      <button class="btn btn--primary btn--lg" id="btn-solo" type="button">Quick race</button>
+      <button class="btn" id="btn-host" type="button">Host a room</button>
+      <button class="btn" id="btn-join" type="button">Join a room</button>
+      <button class="btn btn--ghost" id="btn-settings" type="button">Settings</button>
+    </div>
+
+    <div class="pickers">
+      <div class="picker">
+        <span class="picker__label">Car</span>
+        <div class="picker__row" id="car-picker" role="radiogroup" aria-label="Choose a car"></div>
+      </div>
+      <div class="picker">
+        <span class="picker__label">Track</span>
+        <div class="picker__row" id="track-picker" role="radiogroup" aria-label="Choose a track"></div>
+      </div>
+    </div>
+    <p class="hint">Keyboard: arrows/WASD drive · Space handbrake · Shift boost · C camera · R respawn · Esc pause</p>
+  </section>
+
+  <!-- ===================== LOBBY ===================== -->
+  <section id="screen-lobby" class="screen screen--lobby" hidden>
+    <h2 class="screen__title" id="lobby-title">Lobby</h2>
+    <p class="screen__lead" id="lobby-lead">Share the invite code with a friend. Traffic and the track are synced by the host.</p>
+
+    <div class="lobby" id="lobby-host" hidden>
+      <label class="field">
+        <span class="field__label">Your invite code</span>
+        <textarea id="invite-code" class="field__input code" readonly rows="3" aria-label="Invite code"></textarea>
+      </label>
+      <div class="lobby__actions">
+        <button class="btn" id="btn-copy-invite" type="button">Copy code</button>
+        <button class="btn btn--ghost" id="btn-share-invite" type="button">Share</button>
+        <button class="btn btn--ghost" id="btn-local-host" type="button">Same-device room</button>
+      </div>
+      <label class="field">
+        <span class="field__label">Paste the reply code from your friend</span>
+        <textarea id="answer-code" class="field__input code" rows="2" placeholder="Reply code" aria-label="Reply code"></textarea>
+      </label>
+      <div class="lobby__actions">
+        <button class="btn btn--primary" id="btn-accept-answer" type="button">Connect</button>
+      </div>
+    </div>
+
+    <div class="lobby" id="lobby-join" hidden>
+      <label class="field">
+        <span class="field__label">Paste the invite code</span>
+        <textarea id="join-code" class="field__input code" rows="3" placeholder="Paste the code your friend sent you" aria-label="Invite code to join"></textarea>
+      </label>
+      <div class="lobby__actions">
+        <button class="btn btn--primary" id="btn-connect" type="button">Connect</button>
+        <button class="btn btn--ghost" id="btn-local-room" type="button">Same-device test</button>
+      </div>
+      <label class="field" id="reply-field" hidden>
+        <span class="field__label">Send this reply code back to the host</span>
+        <textarea id="reply-code" class="field__input code" rows="3" readonly aria-label="Reply code"></textarea>
+      </label>
+    </div>
+
+    <div class="lobby__peers" id="lobby-peers" role="list"></div>
+    <div class="lobby__actions">
+      <button class="btn btn--primary" id="btn-start-race" type="button" hidden>Start race</button>
+      <button class="btn btn--ghost" id="btn-leave-lobby" type="button">Back</button>
+    </div>
+  </section>
+
+  <!-- ===================== PAUSE ===================== -->
+  <section id="screen-pause" class="screen screen--panel" hidden>
+    <h2 class="screen__title">Paused</h2>
+    <div class="menu">
+      <button class="btn btn--primary" id="btn-resume" type="button">Resume</button>
+      <button class="btn" id="btn-restart" type="button">Restart race</button>
+      <button class="btn" id="btn-pause-settings" type="button">Settings</button>
+      <button class="btn btn--ghost" id="btn-quit" type="button">Quit to menu</button>
+    </div>
+  </section>
+
+  <!-- ===================== SETTINGS ===================== -->
+  <section id="screen-settings" class="screen screen--panel" hidden>
+    <h2 class="screen__title">Settings</h2>
+    <div class="settings" id="settings-body"></div>
+    <div class="menu">
+      <button class="btn btn--primary" id="btn-settings-close" type="button">Done</button>
+    </div>
+  </section>
+
+  <!-- ===================== RESULTS ===================== -->
+  <section id="screen-results" class="screen screen--panel" hidden>
+    <h2 class="screen__title" id="results-title">Race complete</h2>
+    <div class="results" id="results-body"></div>
+    <div class="menu">
+      <button class="btn btn--primary" id="btn-again" type="button">Race again</button>
+      <button class="btn btn--ghost" id="btn-menu" type="button">Main menu</button>
+    </div>
+  </section>
+
+  <!-- ===================== OVERLAYS ===================== -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="rotate" class="rotate-hint" hidden>
+    <div class="rotate-hint__icon" aria-hidden="true">⟳</div>
+    <p>Rotate your phone to landscape for the best view.</p>
+  </div>
+  <div id="perf" class="perf" hidden></div>
+
+  <!-- ===================== LOADING ===================== -->
+  <div id="loading" class="loading">
+    <div class="loading__inner">
+      <div class="loading__title">DRIFTLINE</div>
+      <div class="loading__bar"><div class="loading__fill" id="loading-bar"></div></div>
+      <div class="loading__label" id="loading-label">Loading world…</div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js?v=1"></script>
+</body>
+</html>

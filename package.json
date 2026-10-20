@@ -1,0 +1,35 @@
+{
+  "name": "driftline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Driftline - a Slowroads-style pseudo-3D drift racer that runs in the browser on mobile and desktop, with serverless peer-to-peer multiplayer.",
+  "type": "module",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "dev": "node tools/serve.mjs",
+    "test": "node tools/run-tests.mjs",
+    "test:watch": "node --test --watch tests/",
+    "typecheck": "tsc -p tsconfig.json",
+    "e2e": "node tools/e2e.mjs",
+    "verify": "npm run typecheck && npm test"
+  },
+  "keywords": [
+    "game",
+    "racing",
+    "drift",
+    "pseudo-3d",
+    "webrtc",
+    "peer-to-peer",
+    "mobile"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  }
+}

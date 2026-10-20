@@ -1,0 +1,27 @@
+{
+  "name": "Driftline",
+  "short_name": "Driftline",
+  "description": "Pseudo-3D... no: real 3D drift racing for mobile and desktop with peer-to-peer multiplayer and no backend.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#070912",
+  "theme_color": "#0b0d16",
+  "categories": ["games", "racing"],
+  "icons": [
+    {
+      "src": "./assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./assets/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

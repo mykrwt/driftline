@@ -57,6 +57,8 @@ export function createWorld(options) {
   const scene = createWorldScene(profile, {
     seed,
     assets: options.assets,
+    // The impostor baker needs the raw Three.js renderer.
+    renderer: options.renderer?.renderer ?? options.renderer,
     palette: options.palette,
   });
   const effects = createEffects(scene.scene);

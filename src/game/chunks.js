@@ -14,9 +14,21 @@ import {
   roadOffset,
   roadHeight,
   roadHalfWidth,
+  roadBank,
   surfaceHeight,
   driftFactor,
 } from './road.js';
+import { mergeGeometries } from './models.js';
+import { fbm } from './noise.js';
+
+/** Terrain chunk size in metres. */
+export const TERRAIN_CHUNK = 256;
+/** Resolution of the terrain chunks close to the player. */
+export const TERRAIN_NEAR_RES = 40;
+/** Resolution of the terrain chunks further away. */
+export const TERRAIN_FAR_RES = 22;
+/** How many chunks are kept in each direction. */
+export const TERRAIN_RADIUS = 3;
 
 /** Segments per chunk. */
 export const SEGMENTS_PER_CHUNK = 32;
@@ -147,6 +159,219 @@ function buildTerrainGeometry(profile, startS, endS, geometry) {
 }
 
 /**
+ * Builds the mountain terrain around the player.
+ *
+ * The height comes from the same function the physics uses, so the wheels
+ * always touch the mesh. The colours blend grass, rock and snow by slope and
+ * altitude, and the far chunks get a coarse mesh with billboard forests.
+ *
+ * @param {{
+ *   profile: import('./road.js').RoadProfile,
+ *   scene: THREE.Scene,
+ *   seed: number,
+ *   terrainMaterial: THREE.Material,
+ *   impostors?: any,
+ * }} options
+ */
+export function createTerrainManager(options) {
+  const { profile, scene, seed, terrainMaterial } = options;
+  /** @type {Map<string, { group: THREE.Group, meshes: THREE.Object3D[] }>} */
+  const chunks = new Map();
+
+  /**
+   * @param {number} cx
+   * @param {number} cz
+   * @param {number} res
+   */
+  function buildChunk(cx, cz, res) {
+    const key = `${cx}:${cz}`;
+    if (chunks.has(key)) return;
+    const group = new THREE.Group();
+    const size = TERRAIN_CHUNK;
+    const originX = cx * size;
+    const originZ = cz * size;
+    const step = size / res;
+
+    const positions = new Float32Array((res + 1) * (res + 1) * 3);
+    const normals = new Float32Array((res + 1) * (res + 1) * 3);
+    const uvs = new Float32Array((res + 1) * (res + 1) * 2);
+    const colors = new Float32Array((res + 1) * (res + 1) * 3);
+    const indices = [];
+
+    const grass = new THREE.Color('#5d9a52');
+    const grassDry = new THREE.Color('#8a9a5c');
+    const rock = new THREE.Color('#9a9ba2');
+    const rockDark = new THREE.Color('#6b6d75');
+    const snow = new THREE.Color('#f2f6fc');
+    const colour = new THREE.Color();
+
+    for (let z = 0; z <= res; z++) {
+      for (let x = 0; x <= res; x++) {
+        const wx = originX + x * step;
+        const wz = originZ + z * step;
+        const height = surfaceHeight(profile, wx, wz, undefined, true);
+        const index = (z * (res + 1) + x) * 3;
+        positions[index] = wx;
+        positions[index + 1] = height;
+        positions[index + 2] = wz;
+        const uvIndex = (z * (res + 1) + x) * 2;
+        uvs[uvIndex] = wx * 0.05;
+        uvs[uvIndex + 1] = wz * 0.05;
+
+        // Slope and altitude decide what the ground looks like.
+        const hx = surfaceHeight(profile, wx + step, wz) - surfaceHeight(profile, wx - step, wz);
+        const hz = surfaceHeight(profile, wx, wz + step) - surfaceHeight(profile, wx, wz - step);
+        const slope = Math.min(1, Math.hypot(hx, hz) / (step * 2) * 1.4);
+        const altitude = height - roadHeight(profile, wz);
+        const patch = fbm(wx * 0.02, wz * 0.02, 3, seed + 17) * 0.5 + 0.5;
+
+        colour.copy(grass).lerp(grassDry, patch * 0.7);
+        colour.lerp(rock, Math.min(1, Math.max(0, (slope - 0.25) * 2.4)));
+        colour.lerp(rockDark, Math.min(1, Math.max(0, (slope - 0.6) * 1.8)));
+        colour.lerp(snow, Math.min(1, Math.max(0, (altitude - 105) / 70)));
+        colors[index] = colour.r;
+        colors[index + 1] = colour.g;
+        colors[index + 2] = colour.b;
+      }
+    }
+
+    for (let z = 0; z < res; z++) {
+      for (let x = 0; x < res; x++) {
+        const a = z * (res + 1) + x;
+        const b = (z + 1) * (res + 1) + x;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+
+    const mesh = new THREE.Mesh(geometry, terrainMaterial);
+    mesh.receiveShadow = false;
+    group.add(mesh);
+
+    // --- far forest: billboard impostors on the slopes --------------------
+    if (options.impostors && res === TERRAIN_FAR_RES) {
+      addImpostorForest(group, cx, cz, seed, options.impostors);
+    }
+
+    scene.add(group);
+    chunks.set(key, { group, meshes: [mesh] });
+  }
+
+  /**
+   * @param {THREE.Group} group
+   * @param {number} cx
+   * @param {number} cz
+   * @param {number} worldSeed
+   * @param {any} impostors
+   */
+  function addImpostorForest(group, cx, cz, worldSeed, impostors) {
+    const random = chunkRandom(cx * 73856093 ^ cz * 19349663, worldSeed);
+    const dummy = new THREE.Object3D();
+    const count = 260;
+    const matrices = [];
+    const size = TERRAIN_CHUNK;
+    for (let i = 0; i < count; i++) {
+      const wx = cx * size + random() * size;
+      const wz = cz * size + random() * size;
+      const height = surfaceHeight(profile, wx, wz, undefined, true);
+      const altitude = height - roadHeight(profile, wz);
+      if (altitude < 12 || altitude > 150) continue;
+      const hx = surfaceHeight(profile, wx + 4, wz) - surfaceHeight(profile, wx - 4, wz);
+      const hz = surfaceHeight(profile, wx, wz + 4) - surfaceHeight(profile, wx, wz - 4);
+      const slope = Math.hypot(hx, hz) / 8;
+      if (slope > 1.3) continue;
+      // Keep the trees off the road.
+      const centre = roadOffset(profile, wz);
+      if (Math.abs(wx - centre) < roadHalfWidth(profile, wz) + 12) continue;
+      const kind = random();
+      const asset = kind < 0.62 ? impostors.pine : impostors.tree;
+      if (!asset) continue;
+      dummy.position.set(wx, height - 0.3, wz);
+      dummy.rotation.set(0, random() * Math.PI * 2, 0);
+      const scale = 0.75 + random() * 0.75;
+      dummy.scale.set(scale, scale * (0.85 + random() * 0.4), scale);
+      dummy.updateMatrix();
+      matrices.push(dummy.matrix.clone());
+    }
+    if (matrices.length === 0) return;
+    for (const asset of [impostors.pine, impostors.tree]) {
+      if (!asset) continue;
+      const mesh = new THREE.InstancedMesh(asset.geometry, asset.material, matrices.length);
+      matrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.computeBoundingSphere();
+      group.add(mesh);
+    }
+  }
+
+  return {
+    /**
+     * @param {number} playerX
+     * @param {number} playerZ
+     */
+    update(playerX, playerZ) {
+      const cx = Math.round(playerX / TERRAIN_CHUNK);
+      const cz = Math.round(playerZ / TERRAIN_CHUNK);
+      for (let dz = -TERRAIN_RADIUS; dz <= TERRAIN_RADIUS; dz++) {
+        for (let dx = -TERRAIN_RADIUS; dx <= TERRAIN_RADIUS; dx++) {
+          const distance = Math.max(Math.abs(dx), Math.abs(dz));
+          const res = distance <= 1 ? TERRAIN_NEAR_RES : TERRAIN_FAR_RES;
+          buildChunk(cx + dx, cz + dz, res);
+        }
+      }
+      for (const [key, entry] of Array.from(chunks.entries())) {
+        const [kx, kz] = key.split(':').map(Number);
+        if (Math.abs(kx - cx) > TERRAIN_RADIUS + 1 || Math.abs(kz - cz) > TERRAIN_RADIUS + 1) {
+          scene.remove(entry.group);
+          entry.group.traverse((object) => {
+            if (object instanceof THREE.Mesh) object.geometry?.dispose?.();
+          });
+          chunks.delete(key);
+        }
+      }
+    },
+    get chunkCount() {
+      return chunks.size;
+    },
+    dispose() {
+      for (const entry of chunks.values()) {
+        scene.remove(entry.group);
+        entry.group.traverse((object) => {
+          if (object instanceof THREE.Mesh) object.geometry?.dispose?.();
+        });
+      }
+      chunks.clear();
+    },
+  };
+}
+
+/**
+ * Crossed billboard geometry for a tree impostor.
+ * @param {number} width
+ * @param {number} height
+ * @returns {THREE.BufferGeometry}
+ */
+export function createImpostorGeometry(width, height) {
+  const parts = [];
+  for (let i = 0; i < 3; i++) {
+    const plane = new THREE.PlaneGeometry(width, height);
+    plane.translate(0, height / 2, 0);
+    plane.rotateY((i / 3) * Math.PI);
+    parts.push(plane);
+  }
+  const merged = mergeGeometries(parts);
+  parts.forEach((part) => part.dispose());
+  return merged;
+}
+
+/**
  * Creates and recycles world chunks.
  *
  * @param {{
@@ -176,11 +401,7 @@ export function createChunkManager(options) {
     const road = new THREE.Mesh(roadGeometry, options.roadMaterial);
     road.frustumCulled = true;
     group.add(road);
-
-    const terrainGeometry = new THREE.BufferGeometry();
-    buildTerrainGeometry(profile, startS, endS, terrainGeometry);
-    const terrain = new THREE.Mesh(terrainGeometry, options.terrainMaterial);
-    group.add(terrain);
+    // The surrounding terrain is built by the terrain manager (mountains).
 
     // --- scenery ---------------------------------------------------------
     const random = chunkRandom(index, seed);
@@ -275,7 +496,7 @@ export function createChunkManager(options) {
     }
 
     scene.add(group);
-    const entry = { group, meshes: [road, terrain] };
+    const entry = { group, meshes: [road] };
     chunks.set(index, entry);
     return entry;
   }

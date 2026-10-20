@@ -8,6 +8,7 @@ import {
   roadSlope,
   roadHalfWidth,
   roadCurvature,
+  roadBank,
   roadInfo,
   surfaceHeight,
   surfaceNormal,
@@ -87,7 +88,14 @@ test('the road widens into drift areas', () => {
 
 test('the road surface is flat across its width', () => {
   const profile = createRoadProfile(5);
-  const s = 1500;
+  // Find a straight section: the banking tilts the corners, not the straights.
+  let s = 0;
+  for (let probe = 0; probe < 20000; probe += 25) {
+    if (Math.abs(roadBank(profile, probe)) < 0.004) {
+      s = probe;
+      break;
+    }
+  }
   const centre = roadOffset(profile, s);
   const height = roadHeight(profile, s);
   for (const lateral of [-6, -3, 0, 3, 6]) {

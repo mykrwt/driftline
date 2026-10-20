@@ -11,6 +11,7 @@
  */
 
 import { clamp, smoothstep } from '../core/math.js';
+import { fbm, ridged, warpedFbm } from './noise.js';
 
 /** Metres per road segment. */
 export const SEGMENT_LENGTH = 6;
@@ -80,6 +81,7 @@ export function createRoadProfile(seed) {
     hillAmp,
     hillFreq,
     hillPhase,
+    seed: seed >>> 0,
     driftSpacing: 1400 + random() * 900,
     driftLength: 150 + random() * 90,
   };
@@ -202,6 +204,39 @@ export function roadCurvature(profile, s) {
 }
 
 /**
+ * The height of the mountains relative to the level of the road.
+ *
+ * Domain warped fractal noise gives the broad shapes, a ridged multifractal
+ * adds the sharp crests, so the range reads like real rock rather than soft
+ * blobs.
+ *
+ * @param {RoadProfile} profile
+ * @param {number} x
+ * @param {number} z
+ * @returns {number} metres above the road's level
+ */
+export function mountainHeight(profile, x, z) {
+  const seed = profile.seed;
+  const wx = warpedFbm(x * 0.00032, z * 0.00032, seed + 5) * 320;
+  const wz = warpedFbm(x * 0.00032 + 13.7, z * 0.00032 - 7.1, seed + 9) * 320;
+  const rolling = fbm((x + wx) * 0.0013, (z + wz) * 0.0013, 5, seed) * 55;
+  const ridge = ridged((x + wx * 0.55) * 0.00055, (z + wz * 0.55) * 0.00055, 4, seed + 3);
+  const peaks = Math.max(0, ridge - 0.22) * 420;
+  const detail = fbm(x * 0.006, z * 0.006, 3, seed + 41) * 5.5;
+  return rolling + peaks + detail;
+}
+
+/**
+ * The banking of the road: corners lean into the turn.
+ * @param {RoadProfile} profile
+ * @param {number} s
+ * @returns {number} radians of cross slope
+ */
+export function roadBank(profile, s) {
+  return clamp(roadCurvature(profile, s) * 60, -0.1, 0.1);
+}
+
+/**
  * Rough terrain height away from the road.
  * @param {number} x
  * @param {number} z
@@ -226,7 +261,7 @@ export function terrainNoise(x, z) {
  * @param {number} z
  * @param {{ out?: { height: number, lateral: number, onRoad: boolean, s: number } }} [result]
  */
-export function surfaceHeight(profile, x, z, result) {
+export function surfaceHeight(profile, x, z, result, forMesh = false) {
   const s = z;
   const centre = roadOffset(profile, s);
   const lateral = x - centre;
@@ -234,21 +269,28 @@ export function surfaceHeight(profile, x, z, result) {
   const roadY = roadHeight(profile, s);
 
   if (Math.abs(lateral) <= halfWidth) {
+    // The road surface, banked into the corners.
+    const bank = roadBank(profile, s);
+    const height = roadY + ROAD_LIFT + bank * lateral - (forMesh ? 0.16 : 0);
     if (result) {
-      result.height = roadY + ROAD_LIFT;
+      result.height = height;
       result.lateral = lateral;
       result.onRoad = true;
       result.s = s;
     }
-    return roadY + ROAD_LIFT;
+    return height;
   }
 
-  const dist = Math.abs(lateral);
-  // The road's own height fades out over 150 m, the rolling ground fades in
-  // over 30 m. That keeps the surface continuous - no cliffs at the verge.
-  const roadFade = 1 - smoothstep(clamp((dist - halfWidth) / 150, 0, 1));
-  const noiseFade = smoothstep(clamp((dist - halfWidth) / 30, 0, 1));
-  const height = roadY * roadFade + terrainNoise(x, z) * noiseFade;
+  const dist = Math.abs(lateral) - halfWidth;
+  // The valley opens up: the ground starts at the level of the road and grows
+  // into the mountain range.
+  const blend = smoothstep(clamp(dist / 95, 0, 1));
+  const mountain = mountainHeight(profile, x, z);
+  // The banking continues into the verge so there is no ledge at the edge.
+  const bankFade = 1 - smoothstep(clamp(dist / 40, 0, 1));
+  // A shallow ditch along the verge reads as a drainage channel.
+  const shoulder = -0.28 * Math.exp(-dist / 9);
+  const height = roadY + roadBank(profile, s) * lateral * bankFade + mountain * blend + shoulder;
   if (result) {
     result.height = height;
     result.lateral = lateral;
@@ -266,7 +308,7 @@ export function surfaceHeight(profile, x, z, result) {
  * @param {THREE.Vector3 | { x: number, y: number, z: number }} [out]
  */
 export function surfaceNormal(profile, x, z, out) {
-  const e = 0.75;
+  const e = 1.2;
   const hx = surfaceHeight(profile, x + e, z) - surfaceHeight(profile, x - e, z);
   const hz = surfaceHeight(profile, x, z + e) - surfaceHeight(profile, x, z - e);
   const nx = -hx;

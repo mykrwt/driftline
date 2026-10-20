@@ -474,28 +474,36 @@ export function createSmokeTexture() {
 /**
  * Asphalt texture with lane markings (tiles seamlessly along the road).
  * @param {{ road: string, lane: string, rumbleA: string, rumbleB: string }} palette
+ * @param {HTMLImageElement | null} [baseImage] an optional photographic asphalt base
  * @returns {THREE.CanvasTexture}
  */
-export function createRoadTexture(palette) {
+export function createRoadTexture(palette, baseImage = null) {
   const size = 256;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
 
-  ctx.fillStyle = palette.road;
-  ctx.fillRect(0, 0, size, size);
+  if (baseImage) {
+    // Photographic asphalt, darkened a touch so the markings pop.
+    ctx.drawImage(baseImage, 0, 0, size, size);
+    ctx.fillStyle = 'rgba(18, 20, 26, 0.35)';
+    ctx.fillRect(0, 0, size, size);
+  } else {
+    ctx.fillStyle = palette.road;
+    ctx.fillRect(0, 0, size, size);
 
-  // asphalt speckle
-  const image = ctx.getImageData(0, 0, size, size);
-  const data = image.data;
-  for (let i = 0; i < data.length; i += 4) {
-    const n = (Math.random() - 0.5) * 14;
-    data[i] = Math.max(0, Math.min(255, data[i] + n));
-    data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + n));
-    data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + n));
+    // asphalt speckle
+    const image = ctx.getImageData(0, 0, size, size);
+    const data = image.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const n = (Math.random() - 0.5) * 14;
+      data[i] = Math.max(0, Math.min(255, data[i] + n));
+      data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + n));
+      data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + n));
+    }
+    ctx.putImageData(image, 0, 0);
   }
-  ctx.putImageData(image, 0, 0);
 
   // edge lines (u = 0 and u = 1 are the road edges)
   ctx.fillStyle = palette.lane;

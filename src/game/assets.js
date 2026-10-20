@@ -12,6 +12,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { GLTFLoader } from '../../vendor/three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from '../../vendor/three/addons/utils/BufferGeometryUtils.js';
+import { createImpostorGeometry } from './chunks.js';
 
 const BASE = './assets/models/';
 
@@ -202,6 +203,10 @@ export function createAssetLibrary() {
   const scenes = new Map();
   /** @type {Map<string, { geometry: THREE.BufferGeometry, material: THREE.Material }>} */
   const props = new Map();
+  /** @type {Map<string, { geometry: THREE.BufferGeometry, material: THREE.Material }>} */
+  const impostors = new Map();
+  /** @type {Record<string, HTMLImageElement>} */
+  const textures = {};
   /** @type {Map<string, { body: THREE.Object3D, wheels: THREE.Object3D[] }>} */
   const cars = new Map();
   let ready = false;
@@ -269,17 +274,34 @@ export function createAssetLibrary() {
     return { root, wheels };
   }
 
+  /**
+   * @param {string} name
+   * @returns {Promise<HTMLImageElement>}
+   */
+  function loadTexture(name) {
+    return new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => resolve(image);
+      image.src = `./assets/textures/${name}.jpg`;
+    });
+  }
+
   return {
     /** @returns {boolean} */
     get ready() {
       return ready;
+    },
+    /** @returns {Record<string, HTMLImageElement>} */
+    get textures() {
+      return textures;
     },
     /**
      * Load everything up front so the race never stutters.
      * @param {(loaded: number, total: number) => void} [onProgress]
      */
     async loadAll(onProgress) {
-      const total = Object.keys(CAR_ASSETS).length + Object.keys(PROP_ASSETS).length;
+      const total = Object.keys(CAR_ASSETS).length + Object.keys(PROP_ASSETS).length + 2;
       let done = 0;
       const track = (job) =>
         job
@@ -300,8 +322,17 @@ export function createAssetLibrary() {
         ),
       ];
       await Promise.all(jobs);
+      // Photographic ground textures (CC0, Poly Haven).
+      await Promise.all([
+        loadTexture('asphalt_diff').then((image) => {
+          textures.asphalt = image;
+        }),
+        loadTexture('ground_diff').then((image) => {
+          textures.ground = image;
+        }),
+      ]);
       ready = true;
-      return { cars, props };
+      return { cars, props, textures };
     },
     /**
      * @param {string} key
@@ -317,9 +348,103 @@ export function createAssetLibrary() {
     prop(key) {
       return props.get(key) ?? null;
     },
+    /**
+     * Build a billboard impostor for a model: the model is rendered once into
+     * a texture and then drawn with a few crossed quads, which is far cheaper
+     * than thousands of real trees.
+     * @param {any} renderer
+     * @param {string} key
+     * @param {{ size?: number }} [options]
+     * @returns {{ geometry: THREE.BufferGeometry, material: THREE.Material } | null}
+     */
+    impostor(renderer, key, options = {}) {
+      const cacheKey = `impostor:${key}`;
+      if (impostors.has(cacheKey)) return impostors.get(cacheKey);
+      const source = scenes.get(key);
+      if (!source) return null;
+
+      const size = options.size ?? 192;
+      const preview = new THREE.Scene();
+      const clone = source.clone(true);
+      preview.add(clone);
+      const box = new THREE.Box3().setFromObject(clone);
+      const dimensions = new THREE.Vector3();
+      const centre = new THREE.Vector3();
+      box.getSize(dimensions);
+      box.getCenter(centre);
+
+      // Light the preview so the baked texture has the real colours.
+      preview.add(new THREE.HemisphereLight(0xbfd7ff, 0x4a5240, 2.1));
+      const keyLight = new THREE.DirectionalLight(0xfff2d6, 2.2);
+      keyLight.position.set(centre.x + 30, centre.y + 40, 40);
+      preview.add(keyLight);
+
+      const width = Math.max(32, Math.round(size));
+      const height = Math.max(32, Math.round((size * dimensions.y) / Math.max(0.001, dimensions.x)));
+      const target = new THREE.WebGLRenderTarget(width, height, {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        depthBuffer: true,
+      });
+      const camera = new THREE.OrthographicCamera(
+        -dimensions.x / 2,
+        dimensions.x / 2,
+        dimensions.y / 2,
+        -dimensions.y / 2,
+        0.1,
+        400,
+      );
+      camera.position.set(centre.x, centre.y, 60);
+      camera.lookAt(centre);
+      const previousTarget = renderer.getRenderTarget();
+      const previousClear = renderer.getClearColor(new THREE.Color());
+      renderer.setRenderTarget(target);
+      renderer.setClearColor(0x000000, 0);
+      renderer.clear();
+      renderer.render(preview, camera);
+      renderer.setRenderTarget(previousTarget);
+      renderer.setClearColor(previousClear, 0);
+      target.texture.colorSpace = THREE.SRGBColorSpace;
+
+      const geometry = createImpostorGeometry(dimensions.x, dimensions.y);
+      const material = new THREE.MeshStandardMaterial({
+        map: target.texture,
+        alphaTest: 0.45,
+        side: THREE.DoubleSide,
+        roughness: 0.95,
+        metalness: 0,
+      });
+      // A gentle wind sway keeps the far forest alive.
+      const timeUniform = { value: 0 };
+      material.userData.time = timeUniform;
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.uTime = timeUniform;
+        shader.vertexShader = `uniform float uTime;\n${shader.vertexShader}`.replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+           #ifdef USE_INSTANCING
+             float sway = sin(uTime * 1.3 + instanceMatrix[3].x * 0.21 + instanceMatrix[3].z * 0.17);
+             transformed.x += sway * 0.07 * max(0.0, transformed.y);
+           #endif`,
+        );
+      };
+      const result = { geometry, material };
+      impostors.set(cacheKey, result);
+      return result;
+    },
     /** @returns {string[]} */
     carKeys() {
       return Array.from(cars.keys());
+    },
+    /**
+     * Advance the animated materials (the wind on the far forest).
+     * @param {number} time seconds
+     */
+    tick(time) {
+      for (const entry of impostors.values()) {
+        const uniform = entry.material.userData?.time;
+        if (uniform) uniform.value = time;
+      }
     },
     /** @returns {string[]} */
     propKeys() {

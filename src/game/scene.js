@@ -7,12 +7,12 @@
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { createRoadTexture } from './models.js';
-import { createChunkManager } from './chunks.js';
+import { createChunkManager, createTerrainManager } from './chunks.js';
 import { roadHeight } from './road.js';
 
 /**
  * @param {import('./road.js').RoadProfile} profile
- * @param {{ seed: number, assets: any, palette?: any, timeOfDay?: 'day' | 'dusk' | 'night' }} options
+ * @param {{ seed: number, assets: any, palette?: any, renderer?: any }} options
  */
 export function createWorldScene(profile, options) {
   const palette = options.palette ?? {
@@ -100,26 +100,30 @@ export function createWorldScene(profile, options) {
   scene.add(fill);
 
   // --- materials ---------------------------------------------------------
-  const roadTexture = createRoadTexture(palette);
+  const roadTexture = createRoadTexture(palette, options.assets?.textures?.asphalt ?? null);
   const roadMaterial = new THREE.MeshStandardMaterial({
     map: roadTexture,
     roughness: 0.94,
     metalness: 0.02,
   });
   const terrainMaterial = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(palette.grass),
+    color: 0xffffff,
     roughness: 1,
     metalness: 0,
-    vertexColors: false,
+    vertexColors: true,
   });
 
-  // A large ground plane that follows the player so the horizon never ends.
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(6000, 6000, 1, 1),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color(palette.grassAlt), roughness: 1 }),
-  );
-  ground.rotation.x = -Math.PI / 2;
-  scene.add(ground);
+  // Photographic ground detail, tiled across the slopes.
+  const groundImage = options.assets?.textures?.ground ?? null;
+  if (groundImage) {
+    const groundTexture = new THREE.Texture(groundImage);
+    groundTexture.wrapS = THREE.RepeatWrapping;
+    groundTexture.wrapT = THREE.RepeatWrapping;
+    groundTexture.colorSpace = THREE.SRGBColorSpace;
+    groundTexture.anisotropy = 4;
+    groundTexture.needsUpdate = true;
+    terrainMaterial.map = groundTexture;
+  }
 
   const chunks = createChunkManager({
     profile,
@@ -130,9 +134,26 @@ export function createWorldScene(profile, options) {
     terrainMaterial,
   });
 
+  // Billboard forests for the far mountains.
+  let impostors = null;
+  if (options.assets && options.renderer) {
+    const tree = options.assets.impostor(options.renderer, 'tree');
+    const pine = options.assets.impostor(options.renderer, 'treePine');
+    if (tree || pine) impostors = { tree, pine };
+  }
+
+  const terrain = createTerrainManager({
+    profile,
+    scene,
+    seed: options.seed,
+    terrainMaterial,
+    impostors,
+  });
+
   return {
     scene,
     chunks,
+    terrain,
     palette,
     /**
      * @param {number} playerS
@@ -141,11 +162,13 @@ export function createWorldScene(profile, options) {
      */
     update(playerS, playerX, playerZ) {
       chunks.update(playerS);
-      ground.position.set(playerX, roadHeight(profile, playerS) - 0.6, playerZ);
+      terrain.update(playerX, playerZ);
       sky.position.set(playerX, 0, playerZ);
+      options.assets?.tick?.(performance.now() / 1000);
     },
     dispose() {
       chunks.dispose();
+      terrain.dispose();
       roadTexture.dispose();
       roadMaterial.dispose();
       terrainMaterial.dispose();

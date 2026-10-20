@@ -15,7 +15,7 @@ import { createCarModel } from './models.js';
 import { createCarState, getCarConfig, placeCar, stepCar } from './physics.js';
 import { hashString } from '../core/rng.js';
 
-const GHOST_ASSETS = ['ghost1', 'ghost2', 'ghost3', 'ghost4', 'ghost5', 'ghost6'];
+const GHOST_ASSETS = ['vector', 'comet', 'bulldozer'];
 import { createRace } from './race.js';
 import { createTrackById, getTrackDef, sampleTrack, terrainHeightAt, projectToTrack } from './track.js';
 

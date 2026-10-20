@@ -81,7 +81,7 @@ function cyl(r, h, seg = 8) {
  */
 export function createCarModel(config, ghost = false, assets = null) {
   const asset = assets && config.assetKey ? assets.car(config.assetKey) : null;
-  if (asset) return buildAssetCar(asset, ghost);
+  if (asset) return buildAssetCar(asset, ghost, config);
   return buildProceduralCar(config, ghost);
 }
 
@@ -90,9 +90,10 @@ export function createCarModel(config, ghost = false, assets = null) {
  * steer and spin.
  * @param {{ root: THREE.Object3D, wheels: THREE.Object3D[] }} asset
  * @param {boolean} ghost
+ * @param {{ color?: string }} config
  * @returns {THREE.Group}
  */
-function buildAssetCar(asset, ghost) {
+function buildAssetCar(asset, ghost, config) {
   const root = new THREE.Group();
   const body = new THREE.Group();
   const model = asset.root.clone(true);
@@ -110,6 +111,8 @@ function buildAssetCar(asset, ghost) {
       object.material.transparent = true;
       object.material.opacity = 0.55;
       object.material.depthWrite = false;
+      // Tint the ghost so players can tell each other apart.
+      if (config?.color) object.material.color = new THREE.Color(config.color).lerp(new THREE.Color(0xffffff), 0.35);
     }
     if (/wheel/i.test(object.name)) {
       wheels.push(object);

@@ -275,10 +275,10 @@ function createMountains(track, palette) {
  * @type {Record<string, string[]>}
  */
 export const PROP_ASSET_KEYS = {
-  tree: ['tree', 'treeOak', 'treeThin'],
-  pine: ['treePine', 'treePineShort'],
+  tree: ['tree', 'treeOak'],
+  pine: ['treePine'],
   palm: ['treePalm'],
-  bush: ['bush', 'bushSmall'],
+  bush: ['bush'],
   rock: ['rock', 'rockSmall'],
   sign: ['sign'],
   billboard: ['billboard'],

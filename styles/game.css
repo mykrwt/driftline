@@ -75,16 +75,6 @@
   align-self: end;
   max-width: 34vw;
 }
-.minimap {
-  width: clamp(96px, 17vw, 168px);
-  height: auto;
-  aspect-ratio: 1;
-  border-radius: 14px;
-  background: rgba(8, 11, 22, 0.5);
-  border: 1px solid rgba(140, 165, 235, 0.18);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
 .standings { display: flex; flex-direction: column; gap: 4px; }
 .standing {
   display: flex;

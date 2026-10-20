@@ -1,13 +1,12 @@
 /**
- * Chase camera.
+ * Chase camera for the vehicle.
  *
- * The camera follows the road rather than the car, so a big drift shows the
- * car sideways - the classic outrun look - while still feeling connected.
- * Pure math, no Three.js: the renderer applies the result to its camera.
+ * The camera follows the chassis, not the velocity, so a drift shows the car
+ * sideways - but it blends a little of the travel direction so the view stays
+ * readable at high slip angles.
  */
 
 import { clamp, damp, wrapAngle } from '../core/math.js';
-import { sampleTrack } from './track.js';
 
 /**
  * @typedef {object} CameraState
@@ -28,8 +27,8 @@ import { sampleTrack } from './track.js';
 export function createCamera() {
   return {
     x: 0,
-    y: 3,
-    z: 0,
+    y: 4,
+    z: -8,
     lookX: 0,
     lookY: 1,
     lookZ: 10,
@@ -41,49 +40,47 @@ export function createCamera() {
 
 /**
  * @param {CameraState} camera
- * @param {import('./physics.js').CarState} car
- * @param {import('./track.js').Track} track
+ * @param {import('./vehicle.js').VehicleState} vehicle
  * @param {number} dt
- * @param {{ back?: number, height?: number, follow?: number, lookAhead?: number }} [options]
  */
-export function updateCamera(camera, car, track, dt, options = {}) {
-  const back = options.back ?? 7.6;
-  const height = options.height ?? 2.7;
-  const follow = options.follow ?? 0.45;
-  const lookAhead = options.lookAhead ?? 16;
+export function updateCamera(camera, vehicle, dt) {
+  const { position, quaternion, velocity, speed } = vehicle;
 
-  const sample = sampleTrack(track, car.distance);
-  const driftAngle = wrapAngle(car.heading - sample.heading);
-  // Mostly follow the road, partially the car: enough to feel the drift.
-  const desiredHeading = sample.heading + driftAngle * follow;
+  // The chassis forward direction in the XZ plane.
+  const forwardX = 2 * (quaternion.x * quaternion.z + quaternion.w * quaternion.y);
+  const forwardZ = 1 - 2 * (quaternion.x * quaternion.x + quaternion.y * quaternion.y);
+  let heading = Math.atan2(forwardX, forwardZ);
 
-  const sinH = Math.sin(desiredHeading);
-  const cosH = Math.cos(desiredHeading);
-  const targetX = car.x - sinH * back;
-  const targetZ = car.z - cosH * back;
-  const ground = car.y ?? sample.y;
+  // Blend a little of the travel direction so a big drift reads clearly.
+  const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
+  if (horizontalSpeed > 3) {
+    const travel = Math.atan2(velocity.x, velocity.z);
+    heading += wrapAngle(travel - heading) * 0.22;
+  }
 
-  camera.x = damp(camera.x, targetX, 11, dt);
-  camera.z = damp(camera.z, targetZ, 11, dt);
-  camera.y = damp(camera.y, ground + height, 7, dt);
+  const back = 7.2 + clamp(speed * 0.035, 0, 2.4);
+  const height = 2.9;
+  const targetX = position.x - Math.sin(heading) * back;
+  const targetZ = position.z - Math.cos(heading) * back;
+  const targetY = position.y + height;
 
-  // Look at a point down the road ahead of the car.
-  const lookHeading = sample.heading + driftAngle * 0.7;
-  camera.lookX = damp(camera.lookX, car.x + Math.sin(lookHeading) * lookAhead, 9, dt);
-  camera.lookZ = damp(camera.lookZ, car.z + Math.cos(lookHeading) * lookAhead, 9, dt);
-  camera.lookY = damp(camera.lookY, ground + 1.6, 6, dt);
-  const speedRatio = clamp(car.speed / 70, 0, 1);
-  // A wider lens at speed is the cheapest, best feeling speed effect there is.
-  camera.fov = damp(camera.fov, 62 + speedRatio * 15 + (car.boosting ? 4 : 0), 4, dt);
-  camera.roll = damp(camera.roll, clamp(-car.slip * 0.1, -0.08, 0.08), 5, dt);
+  camera.x = damp(camera.x, targetX, 9, dt);
+  camera.z = damp(camera.z, targetZ, 9, dt);
+  camera.y = damp(camera.y, targetY, 6, dt);
 
-  // Off-road rumble keeps the camera alive.
-  const rumble = car.onRoad ? 0 : Math.min(1, car.speed / 40) * 0.5;
-  camera.shake = Math.max(camera.shake * Math.exp(-6 * dt), rumble);
+  const lookAhead = 16;
+  camera.lookX = damp(camera.lookX, position.x + Math.sin(heading) * lookAhead, 8, dt);
+  camera.lookZ = damp(camera.lookZ, position.z + Math.cos(heading) * lookAhead, 8, dt);
+  camera.lookY = damp(camera.lookY, position.y + 1.4, 5, dt);
+
+  const speedRatio = clamp(speed / 70, 0, 1);
+  camera.fov = damp(camera.fov, 62 + speedRatio * 15 + (vehicle.boosting ? 4 : 0), 4, dt);
+  // A touch of roll from the lateral acceleration.
+  const lateral = velocity.x * Math.cos(heading) - velocity.z * Math.sin(heading);
+  camera.roll = damp(camera.roll, clamp(-lateral * 0.006, -0.07, 0.07), 5, dt);
 }
 
 /**
- * Add a one-off camera kick (collisions, boost).
  * @param {CameraState} camera
  * @param {number} amount
  */

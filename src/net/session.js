@@ -137,10 +137,14 @@ export function createSession(options) {
       for (const ghost of message.g || []) {
         ghostStates.set(ghost.id, {
           x: ghost.x,
+          y: ghost.y,
           z: ghost.z,
-          heading: ghost.heading,
-          drift: ghost.drift,
-          boost: Boolean(ghost.boost),
+          qx: ghost.qx,
+          qy: ghost.qy,
+          qz: ghost.qz,
+          qw: ghost.qw,
+          speed: ghost.speed,
+          slip: ghost.slip,
         });
       }
       broadcastGhosts();
@@ -309,13 +313,24 @@ export function createSession(options) {
 
     /**
      * Broadcast the local car state (throttled to ~20 Hz).
-     * @param {import('../game/physics.js').CarState} car
+     * @param {import('../game/vehicle.js').VehicleState} vehicle
      * @param {number} now
      */
-    sendState(car, now = Date.now()) {
+    sendState(vehicle, now = Date.now()) {
       if (!peer || closed) return;
+      const packed = packState(vehicle);
       if (role === 'host') {
-        setGhost(id, { x: car.x, z: car.z, heading: car.heading, drift: car.slip, boost: car.boosting });
+        setGhost(id, {
+          x: packed[0],
+          y: packed[1],
+          z: packed[2],
+          qx: packed[3],
+          qy: packed[4],
+          qz: packed[5],
+          qw: packed[6],
+          speed: packed[7],
+          slip: packed[8],
+        });
         if (now - lastGhostBroadcast > 70) {
           lastGhostBroadcast = now;
           broadcastGhosts();
@@ -323,10 +338,14 @@ export function createSession(options) {
           const list = Array.from(ghostStates.entries()).map(([peerId, state]) => ({
             id: peerId,
             x: state.x,
+            y: state.y,
             z: state.z,
-            heading: state.heading,
-            drift: state.drift,
-            boost: state.boost ? 1 : 0,
+            qx: state.qx,
+            qy: state.qy,
+            qz: state.qz,
+            qw: state.qw,
+            speed: state.speed,
+            slip: state.slip,
           }));
           peer.sendState({ t: MSG.GHOSTS, g: list });
         }
@@ -334,7 +353,7 @@ export function createSession(options) {
       }
       if (now - lastStateSent < 50) return;
       lastStateSent = now;
-      peer.sendState({ t: MSG.STATE, id, p: packState(car) });
+      peer.sendState({ t: MSG.STATE, id, p: packed });
     },
 
     /**

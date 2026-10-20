@@ -1,85 +1,83 @@
 /**
- * The game world: track, scene, car, race rules, effects and audio.
+ * The game world: an endless procedural road, a rigid body car, the effects
+ * and the audio.
  *
- * The simulation runs on a fixed timestep and is completely independent from
- * rendering, so it can be driven head-less in tests.
+ * The simulation is fixed step and independent from rendering, so the same
+ * code runs in the browser and in the head-less tests.
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
-import { clamp, sign } from '../core/math.js';
-import { buildWorld } from './scene.js';
+import { clamp } from '../core/math.js';
 import { createRenderer } from './renderer.js';
 import { createCamera, updateCamera, kickCamera } from './camera.js';
 import { createEffects } from './effects.js';
 import { createCarModel } from './models.js';
-import { createCarState, getCarConfig, placeCar, stepCar } from './physics.js';
-import { hashString } from '../core/rng.js';
+import { createVehicle, getCarSpec, placeVehicle, stepVehicle } from './vehicle.js';
+import { createWorldScene } from './scene.js';
+import {
+  createRoadProfile,
+  roadOffset,
+  roadHeight,
+  roadHeading,
+  surfaceHeight,
+  roadInfo,
+} from './road.js';
 
-const GHOST_ASSETS = ['vector', 'comet', 'bulldozer'];
-import { createRace } from './race.js';
-import { createTrackById, getTrackDef, sampleTrack, terrainHeightAt, projectToTrack } from './track.js';
-
-/**
- * @typedef {object} GhostCar
- * @property {string} id
- * @property {string} name
- * @property {string} color
- * @property {string} accent
- * @property {number} x
- * @property {number} z
- * @property {number} heading
- * @property {number} drift
- * @property {boolean} boost
- */
+/** Physics sub step. The vehicle needs a small dt to stay stable. */
+const PHYSICS_STEP = 1 / 120;
 
 /**
- * @typedef {object} WorldOptions
- * @property {HTMLCanvasElement} canvas
- * @property {import('../core/input.js').createInput extends (...args: any) => infer R ? R : any} input
- * @property {ReturnType<typeof import('./audio.js').createAudio>} audio
- * @property {{ quality?: string, autoQuality?: boolean }} [quality]
- * @property {string} [trackId]
- * @property {number} [seed]
- * @property {string} [carId]
- * @property {number} [laps]
- * @property {any} [assets]
- */
-
-/**
- * @param {WorldOptions} options
+ * @param {{
+ *   canvas: HTMLCanvasElement,
+ *   input: any,
+ *   audio: any,
+ *   assets: any,
+ *   seed?: number,
+ *   carId?: string,
+ *   quality?: { quality?: string, autoQuality?: boolean },
+ *   renderer?: any
+ *   palette?: any,
+ * }} options
  */
 export function createWorld(options) {
-  const trackDef = getTrackDef(options.trackId) || getTrackDef('coast');
-  const track = createTrackById(trackDef.id, options.seed);
-  const carConfig = getCarConfig(options.carId || 'vector');
-  const laps = options.laps ?? trackDef.laps ?? 2;
+  const seed = options.seed ?? 0x5eed;
+  const profile = createRoadProfile(seed);
+  const spec = getCarSpec(options.carId || 'vector');
 
-  const renderer = createRenderer(options.canvas, {
+  const vehicle = createVehicle(spec);
+  const spawnS = 40;
+  placeVehicle(
+    vehicle,
+    roadOffset(profile, spawnS),
+    roadHeight(profile, spawnS) + 0.6,
+    spawnS,
+    roadHeading(profile, spawnS),
+  );
+
+  const scene = createWorldScene(profile, {
+    seed,
+    assets: options.assets,
+    palette: options.palette,
+  });
+  const effects = createEffects(scene.scene);
+  const cameraState = createCamera();
+  const renderer = options.renderer ?? createRenderer(options.canvas, {
     quality: options.quality?.quality ?? 'high',
     autoQuality: options.quality?.autoQuality ?? true,
   });
-  const scene = buildWorld(track, { assets: options.assets });
-  const effects = createEffects(scene.scene);
-  const cameraState = createCamera();
 
   // --- car model ---------------------------------------------------------
   const carRoot = new THREE.Group();
-  const carBody = new THREE.Group();
-  const carModel = createCarModel(carConfig, false, options.assets);
-  carBody.add(carModel);
-  carRoot.add(carBody);
+  const carModel = createCarModel(
+    { color: spec.color, accent: spec.accent, assetKey: spec.assetKey },
+    false,
+    options.assets,
+  );
+  carRoot.add(carModel);
   scene.scene.add(carRoot);
 
-  /** @type {Map<string, { root: THREE.Group, body: THREE.Group, model: THREE.Group, data: GhostCar }>} */
+  /** @type {Map<string, { root: THREE.Group, model: THREE.Group, data: any }>} */
   const ghosts = new Map();
-
-  const car = createCarState(carConfig);
-  placeCar(car, track, 6, 0);
-
-  const race = createRace({ laps, trackLength: track.length });
-  const state = race.state;
-  state.driftScore = 0;
-  state.bestDrift = 0;
 
   /** @type {Map<string, (payload: any) => void>} */
   const listeners = new Map();
@@ -101,62 +99,60 @@ export function createWorld(options) {
     for (const handler of set) handler(payload);
   }
 
-  let lastDistance = car.distance;
-  let wheelSpin = 0;
+  // The ground query used by the vehicle physics.
+  const probe = { height: 0, lateral: 0, onRoad: false, s: 0 };
+  /**
+   * @param {number} x
+   * @param {number} z
+   * @param {any} [out]
+   */
+  function groundAt(x, z, out) {
+    const target = out || probe;
+    return surfaceHeight(profile, x, z, target);
+  }
+
   let smokeTimer = 0;
-  let skidTimer = 0;
   let wasDrifting = false;
+  let stuckTimer = 0;
 
   /**
-   * Advance the simulation by one fixed step.
    * @param {number} dt
    */
   function update(dt) {
-    const controls = options.input ? options.input.state : { steer: 0, throttle: 0, brake: 0, handbrake: false, boost: false };
-    const canDrive = state.phase === 'racing';
-    const input = canDrive
-      ? controls
-      : { steer: 0, throttle: 0, brake: controls.brake, handbrake: false, boost: false };
+    const controls = options.input
+      ? options.input.state
+      : { steer: 0, throttle: 0, brake: 0, handbrake: false, boost: false };
+    const input = {
+      steer: controls.steer,
+      throttle: controls.throttle,
+      brake: controls.brake,
+      handbrake: controls.handbrake,
+      boost: controls.boost,
+    };
 
-    stepCar(car, track, carConfig, input, dt);
-
-    // --- race rules ------------------------------------------------------
-    for (const event of race.update(dt, car.distance, car.onRoad)) {
-      switch (event.type) {
-        case 'countdown':
-          options.audio?.countdown(event.value === 0);
-          emit('countdown', event.value);
-          break;
-        case 'lap':
-          emit('lap', { lap: event.lap, lapTime: event.lapTime, best: event.best });
-          break;
-        case 'finish':
-          emit('finish', {
-            lapTimes: event.lapTimes,
-            bestLap: event.bestLap,
-            bestDrift: state.bestDrift,
-            raceTime: event.raceTime,
-          });
-          break;
-        case 'recover':
-          respawn();
-          break;
-        default:
-          break;
-      }
+    // Fixed sub steps keep the suspension stable at any frame rate.
+    let remaining = Math.min(dt, 0.1);
+    while (remaining > 0) {
+      const step = Math.min(PHYSICS_STEP, remaining);
+      stepVehicle(vehicle, input, groundAt, step);
+      remaining -= step;
     }
 
-    // --- drift score -----------------------------------------------------
-    if (car.drifting) {
-      state.driftScore = car.driftScore;
-      state.bestDrift = Math.max(state.bestDrift, car.driftScore);
+    // Keep the car on the road if it ends up in a ditch or on its roof.
+    const info = roadInfo(profile, vehicle.position.x, vehicle.position.z);
+    const upsideDown = vehicle.quaternion.y < 0.1 && vehicle.speed < 4;
+    if (upsideDown) {
+      stuckTimer += dt;
+      if (stuckTimer > 2.5) {
+        respawn();
+        stuckTimer = 0;
+      }
+    } else {
+      stuckTimer = 0;
     }
 
     // --- camera ----------------------------------------------------------
-    updateCamera(cameraState, car, track, dt, {
-      back: 6.6 + Math.min(2.2, car.speed * 0.03),
-      height: 2.35,
-    });
+    updateCamera(cameraState, vehicle, dt);
 
     // --- effects ---------------------------------------------------------
     updateEffects(dt);
@@ -164,14 +160,10 @@ export function createWorld(options) {
     // --- audio -----------------------------------------------------------
     const audio = options.audio;
     if (audio) {
-      const gears = 5;
-      const span = carConfig.maxSpeed / gears;
-      const gearIndex = Math.min(gears - 1, Math.floor(car.speed / span));
-      const within = (car.speed - gearIndex * span) / span;
-      const rpm = clamp(0.18 + within * 0.82, 0, 1);
-      audio.engine(rpm, controls.throttle);
-      audio.tyre(clamp((Math.abs(car.slip) - 0.1) * 3.2, 0, 1), car.speed);
-      audio.wind(car.speed);
+      audio.engine(vehicle.rpm, controls.throttle);
+      const rearSlip = vehicle.wheels[2].lateralSlipSpeed + vehicle.wheels[3].lateralSlipSpeed;
+      audio.tyre(clamp((Math.abs(rearSlip) - 1.2) / 7, 0, 1), vehicle.speed);
+      audio.wind(vehicle.speed);
     }
   }
 
@@ -179,111 +171,101 @@ export function createWorld(options) {
    * @param {number} dt
    */
   function updateEffects(dt) {
-    const sinH = Math.sin(car.heading);
-    const cosH = Math.cos(car.heading);
-    const nx = cosH;
-    const nz = -sinH;
-    const rearX = car.x - sinH * 1.35;
-    const rearZ = car.z - cosH * 1.35;
-    const sample = sampleTrack(track, car.distance);
-    const groundY = car.onRoad ? sample.y : terrainHeightAt(track, car.distance, car.offset);
-
-    const drifting = car.drifting && car.speed > 6;
-    const offRoad = !car.onRoad && car.speed > 4;
-    const vx = Math.sin(car.velAngle) * car.speed;
-    const vz = Math.cos(car.velAngle) * car.speed;
-
     smokeTimer += dt;
-    const interval = drifting ? 0.035 : 0.06;
-    if ((drifting || offRoad) && smokeTimer > interval) {
+    const emitInterval = 0.03;
+    for (const wheel of vehicle.wheels) {
+      const slipping = wheel.contact && (Math.abs(wheel.slipAngle) > 0.12 || Math.abs(wheel.slipRatio) > 0.25);
+      if (!slipping || smokeTimer < emitInterval) continue;
       smokeTimer = 0;
-      const tint = offRoad ? [0.62, 0.5, 0.34] : [0.92, 0.92, 0.95];
-      const intensity = drifting ? clamp(Math.abs(car.slip) * 4, 0.3, 1) : 0.5;
-      for (const side of [-1, 1]) {
-        effects.emitSmoke(
-          rearX + nx * side * 0.82,
-          groundY + 0.25,
-          rearZ + nz * side * 0.82,
-          -vx * 0.5,
-          -vz * 0.5,
-          intensity,
-          tint,
+      const tint = wheel.onRoad ? [0.92, 0.92, 0.95] : [0.62, 0.5, 0.34];
+      effects.emitSmoke(
+        wheel.contactPoint.x,
+        wheel.contactPoint.y + 0.12,
+        wheel.contactPoint.z,
+        -vehicle.velocity.x * 0.35,
+        -vehicle.velocity.z * 0.35,
+        clamp(Math.abs(wheel.slipAngle) * 4, 0.3, 1),
+        tint,
+      );
+      if (wheel.onRoad) {
+        effects.addSkid(
+          wheel.contactPoint.x,
+          wheel.contactPoint.y,
+          wheel.contactPoint.z,
+          0,
+          1,
+          0.34,
+          0.35,
         );
       }
     }
-
-    skidTimer += dt;
-    if (drifting && skidTimer > 0.02) {
-      skidTimer = 0;
-      for (const side of [-1, 1]) {
-        effects.addSkid(rearX + nx * side * 0.82, groundY, rearZ + nz * side * 0.82, nx, nz, 0.3, 0.4);
-      }
-    }
-
-    if (drifting && !wasDrifting) {
-      kickCamera(cameraState, 0.12);
+    if (vehicle.drifting && !wasDrifting) {
+      kickCamera(cameraState, 0.1);
       emit('drift-start');
     }
-    wasDrifting = drifting;
-
+    wasDrifting = vehicle.drifting;
     effects.update(dt);
   }
 
+  /**
+   * Put the car back on the road, upright.
+   */
   function respawn() {
-    const distance = car.distance;
-    placeCar(car, track, distance, 0);
-    car.boostFuel = Math.max(car.boostFuel, 0.25);
-    state.offRoadTime = 0;
-    lastDistance = car.distance;
-    kickCamera(cameraState, 0.25);
+    const s = vehicle.position.z;
+    placeVehicle(
+      vehicle,
+      roadOffset(profile, s),
+      roadHeight(profile, s) + 0.8,
+      s,
+      roadHeading(profile, s),
+    );
+    vehicle.boostFuel = Math.max(vehicle.boostFuel, 0.3);
     emit('respawn');
   }
 
   /**
-   * Synchronise the 3D models with the simulation state.
-   */
-  function syncModels(dt) {
-    const sample = sampleTrack(track, car.distance);
-    carRoot.position.set(car.x, car.y ?? sample.y, car.z);
-    carRoot.rotation.y = car.heading;
-    carBody.rotation.z = car.suspension;
-    carBody.rotation.x = clamp(-car.speed * 0.0016, -0.05, 0.05);
-
-    wheelSpin += (car.speed / 0.34) * dt;
-    const wheels = carModel.userData.wheels || [];
-    const frontWheels = carModel.userData.frontWheels || wheels.slice(0, 2);
-    for (const wheel of wheels) {
-      wheel.rotation.order = 'YXZ';
-      wheel.rotation.x = wheelSpin;
-    }
-    for (const wheel of frontWheels) {
-      wheel.rotation.order = 'YXZ';
-      wheel.rotation.y = car.wheelAngle;
-    }
-
-    for (const ghost of ghosts.values()) {
-      const ghostY = terrainHeightAt(track, ghost.data.distance ?? car.distance, ghost.data.offset ?? 0);
-      ghost.root.position.set(ghost.data.x, ghostY, ghost.data.z);
-      ghost.root.rotation.y = ghost.data.heading;
-      ghost.body.rotation.z = clamp(-ghost.data.drift * 0.02, -0.2, 0.2);
-      const ghostWheels = ghost.model.userData.wheels || [];
-      for (const wheel of ghostWheels) wheel.rotation.x += (car.speed / 0.34) * dt;
-    }
-  }
-
-  /**
-   * Render one frame.
    * @param {number} dt
    */
   function render(dt) {
-    syncModels(dt);
-    scene.follow(renderer.camera);
+    // The car model follows the chassis exactly.
+    carRoot.position.copy(vehicle.position);
+    carRoot.quaternion.copy(vehicle.quaternion);
+
+    const wheels = carModel.userData.wheels || [];
+    const frontWheels = carModel.userData.frontWheels || wheels.slice(0, 2);
+    vehicle.wheels.forEach((wheel, index) => {
+      const mesh = wheels[index];
+      if (!mesh) return;
+      mesh.rotation.order = 'YXZ';
+      mesh.rotation.x = wheel.spin;
+      mesh.rotation.y = wheel.spec.front ? vehicle.wheelAngle : 0;
+      // The wheel moves up into the chassis as the suspension compresses.
+      mesh.position.y = (mesh.userData.baseY ?? (mesh.userData.baseY = mesh.position.y)) + wheel.compression;
+    });
+
+    for (const ghost of ghosts.values()) {
+      ghost.root.position.set(ghost.data.x, ghost.data.y, ghost.data.z);
+      ghost.root.quaternion.set(
+        ghost.data.qx,
+        ghost.data.qy,
+        ghost.data.qz,
+        ghost.data.qw,
+      );
+      const ghostWheels = ghost.model.userData.wheels || [];
+      vehicle.wheels.forEach((wheel, index) => {
+        const mesh = ghostWheels[index];
+        if (mesh) mesh.rotation.x = wheel.spin;
+      });
+    }
+
+    scene.update(vehicle.position.z, vehicle.position.x, vehicle.position.z);
     renderer.render(scene.scene, cameraState);
+    void dt;
   }
 
   /**
-   * Add or update remote (ghost) cars. They never collide with the player.
-   * @param {GhostCar[]} list
+   * Remote cars. They are ghosts: they never collide with the player.
+   * @param {any[]} list
    */
   function setGhosts(list) {
     const seen = new Set();
@@ -291,23 +273,18 @@ export function createWorld(options) {
       seen.add(data.id);
       let entry = ghosts.get(data.id);
       if (!entry) {
-        const assetKey = GHOST_ASSETS[Math.abs(hashString(String(data.id))) % GHOST_ASSETS.length];
         const model = createCarModel(
-          { color: data.color || '#31d6ff', accent: data.accent || '#e9fbff', assetKey },
+          { color: data.color || '#31d6ff', accent: data.accent || '#e9fbff', assetKey: data.assetKey || 'comet' },
           true,
           options.assets,
         );
-        const body = new THREE.Group();
-        body.add(model);
         const root = new THREE.Group();
-        root.add(body);
+        root.add(model);
         scene.scene.add(root);
-        entry = { root, body, model, data };
+        entry = { root, model, data };
         ghosts.set(data.id, entry);
       }
-      // Work out where the ghost sits on the track so it hugs the surface.
-      const projection = projectToTrack(track, data.x, data.z);
-      entry.data = { ...data, distance: projection.distance, offset: projection.offset };
+      entry.data = data;
     }
     for (const [id, entry] of ghosts) {
       if (!seen.has(id)) {
@@ -317,46 +294,29 @@ export function createWorld(options) {
     }
   }
 
-  function reset() {
-    placeCar(car, track, 6, 0);
-    race.reset(car.distance);
-    state.driftScore = 0;
-    state.bestDrift = 0;
-    car.boostFuel = 0.35;
-    car.bestDrift = 0;
-    car.driftScore = 0;
-    lastDistance = car.distance;
-    effects.reset();
-    cameraState.x = car.x;
-    cameraState.z = car.z;
-  }
-
   return {
-    track,
-    car,
-    carConfig,
-    state,
+    vehicle,
+    spec,
+    profile,
     cameraState,
+    scene,
     on,
     update,
     render,
-    reset,
     respawn,
     setGhosts,
-    /** @returns {number} */
-    get speedKmh() {
-      return car.speed * 3.6;
-    },
-    /** Render statistics, used by the performance overlay and the tests. */
-    get stats() {
-      const info = renderer.renderer.info;
+    /**
+     * @returns {{ speed: number, kmh: number, drift: number, multiplier: number, boost: number, onRoad: boolean, s: number }}
+     */
+    get status() {
       return {
-        calls: info.render.calls,
-        triangles: info.render.triangles,
-        geometries: info.memory.geometries,
-        textures: info.memory.textures,
-        programs: info.programs?.length ?? 0,
-        pixelRatio: renderer.pixelRatio,
+        speed: vehicle.speed,
+        kmh: vehicle.speed * 3.6,
+        drift: vehicle.driftScore,
+        multiplier: vehicle.driftMultiplier,
+        boost: vehicle.boostFuel,
+        onRoad: vehicle.wheels[0].onRoad,
+        s: vehicle.position.z,
       };
     },
     resize() {
@@ -370,10 +330,20 @@ export function createWorld(options) {
     setAutoQuality(value) {
       renderer.setAutoQuality(value);
     },
+    /** @returns {any} */
+    get stats() {
+      const info = renderer.renderer.info;
+      return {
+        calls: info.render.calls,
+        triangles: info.render.triangles,
+        pixelRatio: renderer.pixelRatio,
+      };
+    },
     dispose() {
       effects.dispose();
       scene.dispose();
-      renderer.dispose();
+      // The renderer is shared between worlds: a canvas can only ever have
+      // one WebGL context, so it is not disposed here.
     },
   };
 }

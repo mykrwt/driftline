@@ -1,24 +1,26 @@
 /**
- * Driftline bootstrap: wires input, audio, menus, the HUD, the world and the
- * peer-to-peer session together.
+ * Driftline bootstrap.
+ *
+ * One endless world, three cars, drift scoring and serverless peer-to-peer
+ * multiplayer. The host shares a world seed with the guests so everybody
+ * drives the exact same road.
  */
 
 import { createLoop } from './core/loop.js';
 import { createInput, requestTiltPermission } from './core/input.js';
-import { loadState, saveState, recordResult } from './core/storage.js';
+import { loadState, saveState } from './core/storage.js';
 import { createAudio } from './game/audio.js';
 import { createMenus } from './game/menus.js';
 import { createHud } from './game/hud.js';
 import { createWorld } from './game/world.js';
+import { createRenderer } from './game/renderer.js';
 import { createAssetLibrary } from './game/assets.js';
 import { createSession } from './net/session.js';
-import { TRACKS, getTrackDef } from './game/track.js';
-import { formatScore } from './core/math.js';
 
 const doc = globalThis.document;
 const canvas = /** @type {HTMLCanvasElement} */ (doc.getElementById('game'));
 const perfEl = doc.getElementById('perf');
-const rotateHint = doc.getElementById('rotate-hint') || doc.getElementById('rotate');
+const rotateHint = doc.getElementById('rotate');
 
 const persisted = loadState();
 const settings = persisted.settings;
@@ -35,9 +37,9 @@ const DRIVER_COLORS = [
 function randomName() {
   const adjectives = ['Swift', 'Neon', 'Turbo', 'Ghost', 'Rally', 'Midnight', 'Wild', 'Silent'];
   const nouns = ['Comet', 'Falcon', 'Viper', 'Rider', 'Drifter', 'Wolf', 'Racer', 'Bandit'];
-  const a = adjectives[Math.floor(Math.random() * adjectives.length)];
-  const n = nouns[Math.floor(Math.random() * nouns.length)];
-  return `${a}${n}`;
+  return `${adjectives[Math.floor(Math.random() * adjectives.length)]}${
+    nouns[Math.floor(Math.random() * nouns.length)]
+  }`;
 }
 
 if (!settings.name) settings.name = randomName();
@@ -48,6 +50,12 @@ audio.setVolume(settings.volume);
 audio.setMuted(settings.muted);
 
 const assets = createAssetLibrary();
+// One renderer for the whole app: a canvas can only hold a single WebGL
+// context, so the worlds share it.
+const renderer = createRenderer(canvas, {
+  quality: settings.quality,
+  autoQuality: settings.autoQuality,
+});
 
 const input = createInput({
   steerElement: doc.getElementById('touch-steer'),
@@ -71,18 +79,15 @@ let world = null;
 let session = null;
 /** @type {'menu' | 'racing' | 'paused'} */
 let phase = 'menu';
-let frameCounter = 0;
 let lastHudUpdate = 0;
 let peerScores = [];
-/** @type {import('./net/protocol.js').GhostState[]} */
-let lastGhosts = [];
+let worldSeed = (Math.random() * 0xffffff) | 0;
 
 const menus = createMenus({
   settings,
-  records,
   onStart: () => {
     void audio.unlock();
-    startRace({ trackId: settings.track, laps: getTrackDef(settings.track)?.laps ?? 2 });
+    startRace({ seed: worldSeed });
   },
   onHost: () => {
     void audio.unlock();
@@ -107,7 +112,12 @@ const menus = createMenus({
     void acceptAnswer(code);
   },
   onStartRace: () => {
-    startMultiplayerRace();
+    if (!session) {
+      menus.toast('Create a room first', true);
+      return;
+    }
+    worldSeed = (Math.random() * 0xffffff) | 0;
+    session.startRace({ seed: worldSeed });
   },
   onLeaveLobby: () => {
     session?.leave();
@@ -116,27 +126,11 @@ const menus = createMenus({
   },
   onResume: () => resumeRace(),
   onRestart: () => {
-    if (world) {
-      world.reset();
-      phase = 'racing';
-      menus.hideAll();
-      hud.show();
-      loop.start();
-    }
+    world?.respawn();
+    resumeRace();
   },
   onQuit: () => {
     quitToMenu();
-  },
-  onAgain: () => {
-    if (world) {
-      world.reset();
-      phase = 'racing';
-      menus.hideAll();
-      hud.show();
-      loop.start();
-    } else {
-      menus.show('title');
-    }
   },
   onSettingsChange: (next) => {
     Object.assign(settings, next);
@@ -149,7 +143,7 @@ const menus = createMenus({
   onShare: (text) => {
     void copyText(text, 'Invite code ready to share');
     if (navigator.share) {
-      navigator.share({ title: 'Driftline', text: 'Join my Driftline race:', url: text }).catch(() => {});
+      navigator.share({ title: 'Driftline', text: 'Join my Driftline run:', url: text }).catch(() => {});
     }
   },
 });
@@ -168,7 +162,7 @@ async function copyText(text, message) {
 }
 
 /**
- * @param {{ trackId?: string, seed?: number, laps?: number }} config
+ * @param {{ seed?: number }} config
  */
 function startRace(config) {
   disposeWorld();
@@ -177,37 +171,12 @@ function startRace(config) {
     input,
     audio,
     assets,
-    trackId: config.trackId ?? settings.track,
-    seed: config.seed,
+    renderer,
+    seed: config.seed ?? worldSeed,
     carId: settings.car,
-    laps: config.laps,
     quality: { quality: settings.quality, autoQuality: settings.autoQuality },
   });
 
-  hud.setTrack(world.track);
-  world.on('countdown', (value) => hud.countdown(value));
-  world.on('lap', (payload) => {
-    const { newLapRecord } = recordResult({ settings, records }, world.track.id, {
-      lapTime: payload.lapTime,
-    });
-    menus.toast(
-      newLapRecord ? `Lap ${payload.lap} - new best lap!` : `Lap ${payload.lap} complete`,
-    );
-  });
-  world.on('finish', (payload) => {
-    recordResult({ settings, records }, world.track.id, { drift: payload.bestDrift });
-    phase = 'paused';
-    loop.stop();
-    menus.renderResults({
-      lapTimes: payload.lapTimes,
-      bestLap: payload.bestLap,
-      bestDrift: payload.bestDrift,
-      raceTime: payload.raceTime,
-      peers: peerScores,
-    });
-    menus.show('results');
-    hud.hide();
-  });
   world.on('respawn', () => hud.flash());
 
   menus.hideAll();
@@ -233,7 +202,7 @@ function pauseRace() {
 }
 
 function resumeRace() {
-  if (phase !== 'paused') return;
+  if (phase !== 'racing' && phase !== 'paused') return;
   menus.hideAll();
   hud.show();
   phase = 'racing';
@@ -254,19 +223,18 @@ function quitToMenu() {
 
 // --------------------------------------------------------------- multiplayer
 function makeSession() {
-  const created = createSession({
+  return createSession({
     name: settings.name,
     color: identity.color,
     accent: identity.accent,
     useStun: settings.useStun !== false,
     onPeers: (peers) => menus.renderPeers(peers),
     onStatus: (status) => {
-      hud.setNet(status, session?.peerCount ?? 0);
+      hud.setNet?.(status, session?.peerCount ?? 0);
       if (status === 'connected') menus.toast('Connected');
       if (status === 'disconnected' || status === 'failed') menus.toast('Connection lost', true);
     },
     onGhosts: (ghosts) => {
-      lastGhosts = ghosts;
       world?.setGhosts(ghosts);
     },
     onScores: (scores) => {
@@ -274,12 +242,11 @@ function makeSession() {
       updateStandings();
     },
     onStart: (config) => {
-      menus.toast('Race starting');
-      startRace({ trackId: config.trackId, seed: config.seed, laps: config.laps });
+      menus.toast('Starting the world');
+      startRace({ seed: config.seed });
     },
     onNotice: (message) => menus.toast(message, true),
   });
-  return created;
 }
 
 async function hostRoom() {
@@ -313,7 +280,6 @@ async function localRoom() {
   try {
     await session.joinLocal();
     menus.toast('Waiting for a host on this device...');
-    hud.setNet('waiting', 0);
   } catch (err) {
     menus.toast(`Could not join: ${err}`, true);
   }
@@ -348,22 +314,12 @@ async function acceptAnswer(code) {
   }
 }
 
-function startMultiplayerRace() {
-  if (!session) {
-    menus.toast('Create a room first', true);
-    return;
-  }
-  const trackId = settings.track;
-  const seed = Math.floor(Math.random() * 0xffffff);
-  session.startRace({ trackId, seed, laps: getTrackDef(trackId)?.laps ?? 2 });
-}
-
 function updateStandings() {
   const entries = [
-    { id: 'me', name: settings.name, score: world?.car.driftScore ?? 0, isMe: true },
+    { id: 'me', name: settings.name, score: world?.vehicle.driftScore ?? 0, isMe: true },
     ...peerScores.map((peer) => ({ id: peer.id, name: peer.name, score: peer.score })),
   ];
-  hud.setStandings(entries);
+  hud.setPeers(entries);
 }
 
 // ------------------------------------------------------------------ settings
@@ -387,8 +343,7 @@ const loop = createLoop({
     try {
       input.update(dt);
       world.update(dt);
-      session?.sendState(world.car);
-      updateStandings();
+      session?.sendState(world.vehicle);
     } catch (err) {
       globalThis.__driftlineError = String((err && /** @type {any} */ (err).stack) || err);
       console.error('[driftline] update failed', err);
@@ -403,37 +358,27 @@ const loop = createLoop({
       globalThis.__driftlineError = String((err && /** @type {any} */ (err).stack) || err);
       console.error('[driftline] render failed', err);
     }
-    frameCounter++;
     const now = performance.now();
     if (now - lastHudUpdate > 60) {
       lastHudUpdate = now;
+      const status = world.status;
       hud.update({
-        speed: world.car.speed,
-        maxSpeed: world.carConfig.maxSpeed,
-        lap: world.state.lap,
-        laps: world.state.laps,
-        lapTime: world.state.lapTime,
-        bestLap: world.state.bestLap,
-        driftScore: world.car.driftScore,
-        driftMultiplier: world.car.driftMultiplier,
-        drifting: world.car.drifting,
-        boostFuel: world.car.boostFuel,
+        speed: status.speed,
+        kmh: status.kmh,
+        drift: status.drift,
+        multiplier: status.multiplier,
+        drifting: world.vehicle.drifting,
+        boost: status.boost,
+        distance: status.s,
       });
-      hud.drawMinimap(world.car, lastGhosts);
+      updateStandings();
     }
     if (perfEl && settings.showFps) {
-      perfEl.textContent = `${loop.fps.toFixed(0)} fps\n${world.car.speed.toFixed(0)} m/s\ndpr ${rendererPixelRatio()}`;
+      const stats = world.stats;
+      perfEl.textContent = `${loop.fps.toFixed(0)} fps\n${stats.calls} calls\n${(stats.triangles / 1000).toFixed(0)}k tris`;
     }
   },
-  onFps: () => {},
 });
-
-function rendererPixelRatio() {
-  const canvas2d = /** @type {any} */ (canvas);
-  return canvas2d.width && canvas2d.height
-    ? (canvas2d.width / Math.max(1, canvas2d.clientWidth)).toFixed(2)
-    : '1';
-}
 
 // ------------------------------------------------------------------ events
 input.on('action', (action) => {
@@ -447,8 +392,6 @@ input.on('action', (action) => {
     saveState({ settings, records });
     applySettings();
     menus.toast(settings.muted ? 'Muted' : 'Unmuted');
-  } else if (action === 'camera') {
-    menus.toast('Camera follows the road');
   }
 });
 
@@ -460,7 +403,6 @@ doc.addEventListener('visibilitychange', () => {
   if (doc.hidden && phase === 'racing') pauseRace();
 });
 
-// Prevent the page from scrolling / zooming while driving.
 doc.addEventListener('gesturestart', (event) => event.preventDefault());
 doc.addEventListener(
   'touchmove',
@@ -471,13 +413,9 @@ doc.addEventListener(
 );
 doc.addEventListener('dblclick', (event) => event.preventDefault());
 
-// Show the touch controls on touch devices.
 const touchLayer = doc.getElementById('touch');
-if (touchLayer && input.hasTouch) {
-  touchLayer.hidden = false;
-}
+if (touchLayer && input.hasTouch) touchLayer.hidden = false;
 
-// Orientation hint on small portrait screens (non blocking, fades away).
 let hintTimer = 0;
 function updateOrientationHint() {
   if (!rotateHint) return;
@@ -494,7 +432,6 @@ function updateOrientationHint() {
 }
 globalThis.addEventListener('resize', updateOrientationHint);
 
-// Tilt steering needs a user gesture on iOS.
 input.on('action', (action) => {
   if (action === 'confirm' && settings.tiltSteer) {
     void requestTiltPermission();
@@ -506,7 +443,6 @@ menus.show('title');
 applySettings();
 input.setEnabled(false);
 
-// Load the 3D assets in the background so the first race does not stutter.
 const loadingEl = doc.getElementById('loading');
 const loadingBar = doc.getElementById('loading-bar');
 const loadingLabel = doc.getElementById('loading-label');
@@ -519,21 +455,14 @@ assets
     if (loadingBar) loadingBar.style.width = `${Math.round((loaded / total) * 100)}%`;
     if (loadingLabel) loadingLabel.textContent = `Loading world ${loaded}/${total}`;
   })
-  .then((result) => {
-    if (result?.failed) {
-      if (loadingLabel) loadingLabel.textContent = `Loaded with ${result.failed} asset${result.failed > 1 ? 's' : ''} missing - using fallbacks`;
-    }
-    finishLoading();
-  })
+  .then(() => finishLoading())
   .catch((err) => {
     console.error('[driftline] asset load failed', err);
     if (loadingLabel) loadingLabel.textContent = 'Some assets failed to load - using fallback shapes';
     setTimeout(finishLoading, 1200);
   });
-// Never block the game behind a slow asset load.
 setTimeout(finishLoading, 12000);
 
-// Service worker for offline play (skipped on localhost during development).
 const isLocalDev = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 if ('serviceWorker' in navigator && location.protocol !== 'file:' && (!isLocalDev || location.search.includes('sw=1'))) {
   globalThis.addEventListener('load', () => {
@@ -541,18 +470,18 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:' && (!isLocalDe
   });
 }
 
-// Expose a tiny surface for automated tests.
+// A tiny surface for automated tests.
 globalThis.__driftline = {
   get world() {
     return world;
   },
-  assets,
   get phase() {
     return phase;
   },
   get session() {
     return session;
   },
+  assets,
   settings,
   records,
   startRace,
@@ -561,6 +490,4 @@ globalThis.__driftline = {
   input,
   audio,
   loop,
-  tracks: TRACKS,
-  formatScore,
 };

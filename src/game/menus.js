@@ -1,34 +1,31 @@
 /**
- * Screen flow: title, lobby, pause, settings and results.
+ * Screens: title, lobby, pause and settings.
  *
- * The menus only talk to the game through callbacks, so they stay easy to
- * drive from tests.
+ * The world is endless, so there is no track or lap selection - just a car,
+ * a button to drive, and the room for multiplayer.
  */
 
-import { CARS } from './physics.js';
-import { TRACKS } from './track.js';
-import { formatTime, formatScore } from '../core/math.js';
+import { CAR_SPECS } from './vehicle.js';
+import { clamp } from '../core/math.js';
 
 /**
  * @param {{
- *   settings: import('../core/storage.js').Settings,
- *   records: import('../core/storage.js').Records,
+ *   settings: any,
  *   onStart: () => void,
  *   onHost: () => void,
  *   onJoin: () => void,
  *   onLocalRoom: () => void,
+ *   onLocalHost: () => void,
  *   onConnect: (code: string) => void,
- *   onAcceptAnswer?: (code: string) => void,
- *   onLocalHost?: () => void,
+ *   onAcceptAnswer: (code: string) => void,
  *   onStartRace: () => void,
  *   onLeaveLobby: () => void,
  *   onResume: () => void,
  *   onRestart: () => void,
  *   onQuit: () => void,
- *   onSettingsChange: (settings: import('../core/storage.js').Settings) => void,
+ *   onSettingsChange: (settings: any) => void,
  *   onCopy: (text: string) => void,
  *   onShare: (text: string) => void,
- *   onNextRace: () => void,
  * }} options
  */
 export function createMenus(options) {
@@ -40,59 +37,39 @@ export function createMenus(options) {
     lobby: doc.getElementById('screen-lobby'),
     pause: doc.getElementById('screen-pause'),
     settings: doc.getElementById('screen-settings'),
-    results: doc.getElementById('screen-results'),
   };
 
   const toastEl = doc.getElementById('toast');
   let toastTimer = 0;
-  let current = /** @type {keyof typeof screens | null} */ (null);
+  /** @type {keyof typeof screens | null} */
+  let current = null;
 
-  // ------------------------------------------------------------- pickers
+  // ------------------------------------------------------------ car picker
   const carPicker = doc.getElementById('car-picker');
-  const trackPicker = doc.getElementById('track-picker');
 
   function renderPickers() {
-    if (carPicker) {
-      carPicker.replaceChildren(
-        ...CARS.map((car) => {
-          const chip = doc.createElement('button');
-          chip.type = 'button';
-          chip.className = 'chip';
-          chip.setAttribute('role', 'radio');
-          chip.setAttribute('aria-checked', String(car.id === options.settings.car));
-          chip.textContent = car.name;
-          chip.title = car.description;
-          chip.addEventListener('click', () => {
-            options.settings.car = car.id;
-            options.onSettingsChange(options.settings);
-            renderPickers();
-          });
-          return chip;
-        }),
-      );
-    }
-    if (trackPicker) {
-      trackPicker.replaceChildren(
-        ...TRACKS.map((track) => {
-          const chip = doc.createElement('button');
-          chip.type = 'button';
-          chip.className = 'chip';
-          chip.setAttribute('role', 'radio');
-          chip.setAttribute('aria-checked', String(track.id === options.settings.track));
-          chip.textContent = track.name;
-          chip.addEventListener('click', () => {
-            options.settings.track = track.id;
-            options.onSettingsChange(options.settings);
-            renderPickers();
-          });
-          return chip;
-        }),
-      );
-    }
+    if (!carPicker) return;
+    carPicker.replaceChildren(
+      ...Object.values(CAR_SPECS).map((car) => {
+        const chip = doc.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip';
+        chip.setAttribute('role', 'radio');
+        chip.setAttribute('aria-checked', String(car.id === options.settings.car));
+        chip.textContent = car.name;
+        chip.title = car.description;
+        chip.addEventListener('click', () => {
+          options.settings.car = car.id;
+          options.onSettingsChange(options.settings);
+          renderPickers();
+        });
+        return chip;
+      }),
+    );
   }
   renderPickers();
 
-  // ------------------------------------------------------------- settings
+  // -------------------------------------------------------------- settings
   const settingsBody = doc.getElementById('settings-body');
 
   /**
@@ -141,11 +118,7 @@ export function createMenus(options) {
     const parts = [];
 
     const quality = doc.createElement('select');
-    for (const [value, label] of [
-      ['low', 'Low'],
-      ['medium', 'Medium'],
-      ['high', 'High'],
-    ]) {
+    for (const [value, label] of [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']]) {
       const option = doc.createElement('option');
       option.value = value;
       option.textContent = label;
@@ -202,72 +175,12 @@ export function createMenus(options) {
       options.onSettingsChange(s);
     })));
 
-    const units = doc.createElement('select');
-    for (const [value, label] of [['metric', 'km/h'], ['imperial', 'mph']]) {
-      const option = doc.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      if (s.units === value) option.selected = true;
-      units.append(option);
-    }
-    units.addEventListener('change', () => {
-      s.units = units.value;
-      options.onSettingsChange(s);
-    });
-    parts.push(row('Speed units', null, units));
-
     parts.push(row('Show performance overlay', null, toggle(s.showFps, (value) => {
       s.showFps = value;
       options.onSettingsChange(s);
     })));
 
     settingsBody.replaceChildren(...parts);
-  }
-
-  // -------------------------------------------------------------- results
-  const resultsBody = doc.getElementById('results-body');
-  const resultsTitle = doc.getElementById('results-title');
-
-  /**
-   * @param {{
-   *   lapTimes: number[],
-   *   bestLap: number | null,
-   *   bestDrift: number,
-   *   raceTime: number,
-   *   position?: number,
-   *   peers?: { name: string, score: number }[],
-   * }} data
-   */
-  function renderResults(data) {
-    if (resultsTitle) resultsTitle.textContent = data.position ? `Finished P${data.position}` : 'Race complete';
-    if (!resultsBody) return;
-    const rows = [];
-    /**
-     * @param {string} label
-     * @param {string} value
-     * @param {boolean} [hero]
-     */
-    const add = (label, value, hero) => {
-      const rowEl = doc.createElement('div');
-      rowEl.className = hero ? 'result-row result-row--hero' : 'result-row';
-      const l = doc.createElement('span');
-      l.className = 'result-row__label';
-      l.textContent = label;
-      const v = doc.createElement('span');
-      v.className = 'result-row__value';
-      v.textContent = value;
-      rowEl.append(l, v);
-      rows.push(rowEl);
-    };
-
-    add('Total time', formatTime(data.raceTime));
-    add('Best lap', data.bestLap ? formatTime(data.bestLap) : '--:--.--', true);
-    data.lapTimes.forEach((time, index) => add(`Lap ${index + 1}`, formatTime(time)));
-    add('Best drift', formatScore(data.bestDrift));
-    for (const peer of data.peers || []) {
-      add(peer.name, formatScore(peer.score));
-    }
-    resultsBody.replaceChildren(...rows);
   }
 
   // ---------------------------------------------------------------- lobby
@@ -291,7 +204,7 @@ export function createMenus(options) {
     if (lobbyLead) {
       lobbyLead.textContent =
         config.mode === 'host'
-          ? 'Send the invite code to a friend. The host owns the track and the traffic - there is no server in between.'
+          ? 'Send the invite code to a friend. You drive the same endless world - there is no server in between.'
           : 'Paste the invite code your friend sent you, then press Connect.';
     }
     if (lobbyHost) lobbyHost.hidden = config.mode !== 'host';
@@ -315,22 +228,18 @@ export function createMenus(options) {
     if (replyField) replyField.hidden = !code;
   }
 
-  /**
-   * @returns {string}
-   */
+  /** @returns {string} */
   function getAnswerCode() {
     return answerCode?.value?.trim() ?? '';
   }
 
-  /**
-   * @returns {string}
-   */
+  /** @returns {string} */
   function getJoinCode() {
     return joinCode?.value?.trim() ?? '';
   }
 
   /**
-   * @param {import('../net/protocol.js').PeerInfo[]} peers
+   * @param {any[]} peers
    */
   function renderPeers(peers) {
     if (!lobbyPeers) return;
@@ -388,41 +297,29 @@ export function createMenus(options) {
   }
 
   // ---------------------------------------------------------------- wiring
-  doc.getElementById('btn-solo')?.addEventListener('click', () => options.onStart());
-  doc.getElementById('btn-host')?.addEventListener('click', () => options.onHost());
-  doc.getElementById('btn-join')?.addEventListener('click', () => options.onJoin());
-  doc.getElementById('btn-settings')?.addEventListener('click', () => show('settings'));
-  doc.getElementById('btn-settings-close')?.addEventListener('click', () => {
-    show(current === 'settings' ? 'title' : 'title');
-  });
-  doc.getElementById('btn-pause-settings')?.addEventListener('click', () => show('settings'));
-  doc.getElementById('btn-resume')?.addEventListener('click', () => options.onResume());
-  doc.getElementById('btn-restart')?.addEventListener('click', () => options.onRestart());
-  doc.getElementById('btn-quit')?.addEventListener('click', () => options.onQuit());
-  doc.getElementById('btn-again')?.addEventListener('click', () => options.onAgain());
-  doc.getElementById('btn-menu')?.addEventListener('click', () => options.onQuit());
-  doc.getElementById('btn-leave-lobby')?.addEventListener('click', () => options.onLeaveLobby());
-  doc.getElementById('btn-copy-invite')?.addEventListener('click', () => {
-    if (inviteCode?.value) options.onCopy(inviteCode.value);
-  });
-  doc.getElementById('btn-share-invite')?.addEventListener('click', () => {
-    if (inviteCode?.value) options.onShare(inviteCode.value);
-  });
-  doc.getElementById('btn-start-race')?.addEventListener('click', () => options.onStartRace());
-  doc.getElementById('btn-connect')?.addEventListener('click', () => {
-    options.onConnect(getJoinCode());
-  });
-  doc.getElementById('btn-accept-answer')?.addEventListener('click', () => {
-    options.onAcceptAnswer(getAnswerCode());
-  });
-  doc.getElementById('btn-local-room')?.addEventListener('click', () => options.onLocalRoom());
-  doc.getElementById('btn-local-host')?.addEventListener('click', () => options.onLocalHost());
+  const on = (id, handler) => doc.getElementById(id)?.addEventListener('click', handler);
+  on('btn-solo', () => options.onStart());
+  on('btn-host', () => options.onHost());
+  on('btn-join', () => options.onJoin());
+  on('btn-settings', () => show('settings'));
+  on('btn-settings-close', () => show('title'));
+  on('btn-pause-settings', () => show('settings'));
+  on('btn-resume', () => options.onResume());
+  on('btn-restart', () => options.onRestart());
+  on('btn-quit', () => options.onQuit());
+  on('btn-leave-lobby', () => options.onLeaveLobby());
+  on('btn-copy-invite', () => inviteCode?.value && options.onCopy(inviteCode.value));
+  on('btn-share-invite', () => inviteCode?.value && options.onShare(inviteCode.value));
+  on('btn-start-race', () => options.onStartRace());
+  on('btn-connect', () => options.onConnect(getJoinCode()));
+  on('btn-accept-answer', () => options.onAcceptAnswer(getAnswerCode()));
+  on('btn-local-room', () => options.onLocalRoom());
+  on('btn-local-host', () => options.onLocalHost());
 
   return {
     show,
     hideAll,
     toast,
-    renderResults,
     renderSettings,
     renderPickers,
     showLobby,

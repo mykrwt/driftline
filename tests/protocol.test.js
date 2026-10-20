@@ -3,20 +3,31 @@ import assert from 'node:assert/strict';
 import { MSG, packState, unpackState, encode, decode, isValidMessage } from '../src/net/protocol.js';
 
 test('car state packs into a small array', () => {
-  const car = { x: 12.345, z: -67.891, heading: 1.2345, slip: -0.0987, boosting: true };
-  const packed = packState(car);
-  assert.equal(packed.length, 5);
-  assert.ok(JSON.stringify(packed).length < 60);
+  const vehicle = {
+    position: { x: 12.345, y: 0.51, z: -67.891 },
+    quaternion: { x: 0, y: 0.382, z: 0, w: 0.924 },
+    speed: 22.5,
+    slipAngle: -0.0987,
+  };
+  const packed = packState(vehicle);
+  assert.equal(packed.length, 9);
+  assert.ok(JSON.stringify(packed).length < 80);
 });
 
 test('car state survives a round trip', () => {
-  const car = { x: 12.345, z: -67.891, heading: 1.2345, slip: -0.0987, boosting: false };
-  const state = unpackState(packState(car));
-  assert.ok(Math.abs(state.x - car.x) < 0.01);
-  assert.ok(Math.abs(state.z - car.z) < 0.01);
-  assert.ok(Math.abs(state.heading - car.heading) < 0.002);
-  assert.ok(Math.abs(state.drift - car.slip) < 0.002);
-  assert.equal(state.boost, false);
+  const vehicle = {
+    position: { x: 12.345, y: 0.51, z: -67.891 },
+    quaternion: { x: 0.1, y: 0.382, z: 0, w: 0.924 },
+    speed: 22.5,
+    slipAngle: -0.0987,
+  };
+  const state = unpackState(packState(vehicle));
+  assert.ok(Math.abs(state.x - vehicle.position.x) < 0.01);
+  assert.ok(Math.abs(state.y - vehicle.position.y) < 0.01);
+  assert.ok(Math.abs(state.z - vehicle.position.z) < 0.01);
+  assert.ok(Math.abs(state.qy - vehicle.quaternion.y) < 0.002);
+  assert.ok(Math.abs(state.speed - vehicle.speed) < 0.01);
+  assert.ok(Math.abs(state.slip - vehicle.slipAngle) < 0.002);
 });
 
 test('messages encode and decode', () => {

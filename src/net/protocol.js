@@ -31,38 +31,49 @@ export const MSG = {
  * @typedef {object} GhostState
  * @property {string} id
  * @property {number} x
+ * @property {number} y
  * @property {number} z
- * @property {number} heading
- * @property {number} drift
- * @property {boolean} boost
+ * @property {number} qx
+ * @property {number} qy
+ * @property {number} qz
+ * @property {number} qw
+ * @property {number} speed
+ * @property {number} slip
  */
 
 /**
- * Pack the local car state into a compact array.
- * @param {import('../game/physics.js').CarState} car
+ * Pack the chassis state of the local car.
+ * @param {import('../game/vehicle.js').VehicleState} vehicle
  * @returns {number[]}
  */
-export function packState(car) {
+export function packState(vehicle) {
   return [
-    Math.round(car.x * 100) / 100,
-    Math.round(car.z * 100) / 100,
-    Math.round(car.heading * 1000) / 1000,
-    Math.round(car.slip * 1000) / 1000,
-    car.boosting ? 1 : 0,
+    Math.round(vehicle.position.x * 100) / 100,
+    Math.round(vehicle.position.y * 100) / 100,
+    Math.round(vehicle.position.z * 100) / 100,
+    Math.round(vehicle.quaternion.x * 1000) / 1000,
+    Math.round(vehicle.quaternion.y * 1000) / 1000,
+    Math.round(vehicle.quaternion.z * 1000) / 1000,
+    Math.round(vehicle.quaternion.w * 1000) / 1000,
+    Math.round(vehicle.speed * 100) / 100,
+    Math.round(vehicle.slipAngle * 1000) / 1000,
   ];
 }
 
 /**
  * @param {number[]} packed
- * @returns {Omit<GhostState, 'id'>}
  */
 export function unpackState(packed) {
   return {
     x: packed[0],
-    z: packed[1],
-    heading: packed[2],
-    drift: packed[3],
-    boost: Boolean(packed[4]),
+    y: packed[1],
+    z: packed[2],
+    qx: packed[3],
+    qy: packed[4],
+    qz: packed[5],
+    qw: packed[6],
+    speed: packed[7],
+    slip: packed[8],
   };
 }
 

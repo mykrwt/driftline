@@ -111,18 +111,36 @@ test('guest car state reaches the host as a ghost', async () => {
   await guest.join(invite);
   await wait(30);
 
-  guest.sendState({ x: 5, z: 7, heading: 0.5, slip: 0.2, boosting: true }, 1000);
+  guest.sendState(
+    {
+      position: { x: 5, y: 0.5, z: 7 },
+      quaternion: { x: 0, y: 0.382, z: 0, w: 0.924 },
+      speed: 22,
+      slipAngle: 0.2,
+    },
+    1000,
+  );
   await wait(20);
 
   const ghosts = hostGhosts[hostGhosts.length - 1] || [];
   const withGuest = ghosts.find((g) => g.id === guest.id);
   assert.ok(withGuest, 'the host should see the guest car');
   assert.equal(withGuest.x, 5);
+  assert.equal(withGuest.y, 0.5);
   assert.equal(withGuest.z, 7);
-  assert.equal(withGuest.boost, true);
+  assert.equal(withGuest.qy, 0.382);
+  assert.equal(withGuest.speed, 22);
 
   // The host relays every known car state back to the guests.
-  host.sendState({ x: 1, z: 2, heading: 0.1, slip: 0, boosting: false }, 2000);
+  host.sendState(
+    {
+      position: { x: 1, y: 0.5, z: 2 },
+      quaternion: { x: 0, y: 0, z: 0, w: 1 },
+      speed: 10,
+      slipAngle: 0,
+    },
+    2000,
+  );
   await wait(20);
   const relayed = guestGhosts[guestGhosts.length - 1] || [];
   assert.ok(relayed.length >= 1, 'the guest should receive relayed ghosts');

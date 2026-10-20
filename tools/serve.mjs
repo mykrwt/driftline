@@ -151,6 +151,8 @@ const server = createServer(async (req, res) => {
     'cache-control': 'no-store, no-cache, must-revalidate',
     // Service workers and WebRTC are happier with a secure context; localhost counts.
     'x-content-type-options': 'nosniff',
+    // Allows the harness to import modules for debugging.
+    'access-control-allow-origin': '*',
   });
   if (type.startsWith('text/html')) {
     const source = await readFile(target, 'utf8');

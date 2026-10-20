@@ -86,6 +86,29 @@ export function createCarModel(config, ghost = false, assets = null) {
 }
 
 /**
+ * A soft round shadow, shared by every car.
+ * @returns {THREE.CanvasTexture}
+ */
+let shadowTexture = null;
+function getShadowTexture() {
+  if (shadowTexture) return shadowTexture;
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(0,0,0,0.55)');
+  grad.addColorStop(0.6, 'rgba(0,0,0,0.28)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  shadowTexture = new THREE.CanvasTexture(canvas);
+  shadowTexture.needsUpdate = true;
+  return shadowTexture;
+}
+
+/**
  * Use a downloaded low poly car and keep its wheels separate so they can
  * steer and spin.
  * @param {{ root: THREE.Object3D, wheels: THREE.Object3D[] }} asset
@@ -125,8 +148,13 @@ function buildAssetCar(asset, ghost, config) {
 
   // Cheap contact shadow.
   const shadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.4, 4.6),
-    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false }),
+    new THREE.PlaneGeometry(2.6, 4.8),
+    new THREE.MeshBasicMaterial({
+      map: getShadowTexture(),
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+    }),
   );
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.y = 0.02;
@@ -263,8 +291,13 @@ function buildProceduralCar(config, ghost) {
 
   // soft blob shadow (much cheaper than a shadow map)
   const shadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.6, 4.8),
-    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28, depthWrite: false }),
+    new THREE.PlaneGeometry(2.2, 4.4),
+    new THREE.MeshBasicMaterial({
+      map: getShadowTexture(),
+      transparent: true,
+      opacity: 0.7,
+      depthWrite: false,
+    }),
   );
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.y = 0.02;

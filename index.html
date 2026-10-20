@@ -4,17 +4,26 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0b0d16" />
-<meta name="description" content="Driftline - a pseudo-3D drift racer for mobile and desktop with serverless peer-to-peer multiplayer." />
+<meta name="description" content="Driftline - an endless 3D drift world for mobile and desktop with serverless peer-to-peer multiplayer." />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Driftline</title>
 <link rel="manifest" href="./manifest.webmanifest" />
 <link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
-<link rel="stylesheet" href="./styles/base.css?v=1" />
-<link rel="stylesheet" href="./styles/game.css?v=1" />
+<link rel="stylesheet" href="./styles/base.css?v=2" />
+<link rel="stylesheet" href="./styles/game.css?v=2" />
 </head>
 <body>
+<script>
+  // Surface boot errors so the tooling can read them.
+  window.addEventListener('error', function (event) {
+    window.__bootError = String(event.message) + ' @ ' + event.filename + ':' + event.lineno;
+  });
+  window.addEventListener('unhandledrejection', function (event) {
+    window.__bootError = 'unhandled rejection: ' + String(event.reason && (event.reason.stack || event.reason.message) || event.reason);
+  });
+</script>
 <div id="app" class="app" data-phase="boot">
 
   <!-- ===================== GAME CANVAS ===================== -->
@@ -27,17 +36,9 @@
   <!-- ===================== HUD ===================== -->
   <div id="hud" class="hud" aria-hidden="true">
     <div class="hud__top">
-      <div class="hud__chip hud__chip--lap">
-        <span class="hud__label">Lap</span>
-        <span class="hud__value"><span id="hud-lap">1</span><span class="hud__sub">/</span><span id="hud-laps">2</span></span>
-      </div>
-      <div class="hud__chip hud__chip--time">
-        <span class="hud__label">Time</span>
-        <span class="hud__value" id="hud-time">0:00.00</span>
-      </div>
-      <div class="hud__chip hud__chip--best">
-        <span class="hud__label">Best lap</span>
-        <span class="hud__value" id="hud-best">--:--.--</span>
+      <div class="hud__chip hud__chip--distance">
+        <span class="hud__label">Distance</span>
+        <span class="hud__value" id="hud-distance">0.00 km</span>
       </div>
       <div class="hud__chip hud__chip--net" id="hud-net-chip" hidden>
         <span class="hud__dot" id="hud-net-dot"></span>
@@ -46,8 +47,7 @@
     </div>
 
     <div class="hud__left">
-      <canvas id="minimap" class="minimap" width="220" height="220" aria-label="Track map"></canvas>
-      <div class="standings" id="standings"></div>
+      <div class="standings" id="peer-list"></div>
     </div>
 
     <div class="hud__center">
@@ -56,9 +56,8 @@
           <span class="drift-meter__score" id="drift-score">0</span>
           <span class="drift-meter__mult" id="drift-mult">x1.0</span>
         </div>
-        <div class="drift-meter__label" id="drift-label">DRIFT</div>
+        <div class="drift-meter__label">DRIFT</div>
       </div>
-      <div class="countdown" id="countdown" hidden></div>
     </div>
 
     <div class="hud__right">
@@ -98,10 +97,10 @@
     <div class="title-art" aria-hidden="true">
       <span class="title-art__word">DRIFT</span><span class="title-art__word title-art__word--alt">LINE</span>
     </div>
-    <p class="tagline">Pseudo-3D drift racing. Mobile + desktop. Peer-to-peer, no backend.</p>
+    <p class="tagline">An endless road. Real driving physics. Drive and drift together, peer to peer.</p>
 
     <div class="menu">
-      <button class="btn btn--primary btn--lg" id="btn-solo" type="button">Quick race</button>
+      <button class="btn btn--primary btn--lg" id="btn-solo" type="button">Drive</button>
       <button class="btn" id="btn-host" type="button">Host a room</button>
       <button class="btn" id="btn-join" type="button">Join a room</button>
       <button class="btn btn--ghost" id="btn-settings" type="button">Settings</button>
@@ -112,18 +111,14 @@
         <span class="picker__label">Car</span>
         <div class="picker__row" id="car-picker" role="radiogroup" aria-label="Choose a car"></div>
       </div>
-      <div class="picker">
-        <span class="picker__label">Track</span>
-        <div class="picker__row" id="track-picker" role="radiogroup" aria-label="Choose a track"></div>
-      </div>
     </div>
-    <p class="hint">Keyboard: arrows/WASD drive · Space handbrake · Shift boost · C camera · R respawn · Esc pause</p>
+    <p class="hint">Keyboard: arrows/WASD drive · Space handbrake · Shift boost · R respawn · Esc pause</p>
   </section>
 
   <!-- ===================== LOBBY ===================== -->
   <section id="screen-lobby" class="screen screen--lobby" hidden>
     <h2 class="screen__title" id="lobby-title">Lobby</h2>
-    <p class="screen__lead" id="lobby-lead">Share the invite code with a friend. Traffic and the track are synced by the host.</p>
+    <p class="screen__lead" id="lobby-lead">Share the invite code with a friend. The host owns the world - there is no server in between.</p>
 
     <div class="lobby" id="lobby-host" hidden>
       <label class="field">
@@ -161,7 +156,7 @@
 
     <div class="lobby__peers" id="lobby-peers" role="list"></div>
     <div class="lobby__actions">
-      <button class="btn btn--primary" id="btn-start-race" type="button" hidden>Start race</button>
+      <button class="btn btn--primary" id="btn-start-race" type="button" hidden>Start driving</button>
       <button class="btn btn--ghost" id="btn-leave-lobby" type="button">Back</button>
     </div>
   </section>
@@ -171,7 +166,7 @@
     <h2 class="screen__title">Paused</h2>
     <div class="menu">
       <button class="btn btn--primary" id="btn-resume" type="button">Resume</button>
-      <button class="btn" id="btn-restart" type="button">Restart race</button>
+      <button class="btn" id="btn-restart" type="button">Respawn</button>
       <button class="btn" id="btn-pause-settings" type="button">Settings</button>
       <button class="btn btn--ghost" id="btn-quit" type="button">Quit to menu</button>
     </div>
@@ -183,16 +178,6 @@
     <div class="settings" id="settings-body"></div>
     <div class="menu">
       <button class="btn btn--primary" id="btn-settings-close" type="button">Done</button>
-    </div>
-  </section>
-
-  <!-- ===================== RESULTS ===================== -->
-  <section id="screen-results" class="screen screen--panel" hidden>
-    <h2 class="screen__title" id="results-title">Race complete</h2>
-    <div class="results" id="results-body"></div>
-    <div class="menu">
-      <button class="btn btn--primary" id="btn-again" type="button">Race again</button>
-      <button class="btn btn--ghost" id="btn-menu" type="button">Main menu</button>
     </div>
   </section>
 
@@ -214,6 +199,6 @@
   </div>
 </div>
 
-<script type="module" src="./src/main.js?v=1"></script>
+<script type="module" src="./src/main.js?v=2"></script>
 </body>
 </html>

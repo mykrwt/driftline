@@ -127,7 +127,7 @@ const server = createServer(async (req, res) => {
     await mkdir(dir, { recursive: true });
     const dataUrl = body.replace(/^data:image\/\w+;base64,/, '');
     await writeFile(join(dir, `${name}.png`), Buffer.from(dataUrl, 'base64'));
-    res.writeHead(200, { 'content-type': 'text/plain' }).write('ok');
+    res.writeHead(200, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' }).write('ok');
     return;
   }
 

@@ -58,6 +58,21 @@ multiplayer session and a head-less bot that drives the endless road.
 
 On a phone: the steering pad on the left, gas/brake/drift/boost on the right.
 
+## Rendering
+
+- **Mountain terrain** built from domain-warped fractal noise and ridged
+  multifractals, with vertex colours that blend grass, rock and snow by slope
+  and altitude. The mesh and the physics read the same height function, so the
+  wheels always touch the ground.
+- **Layered vegetation**: real low-poly models near the road, billboard
+  impostors baked from those same models for the far slopes, with a wind sway.
+  Everything is GPU instanced.
+- **Chunk streaming** for the road and the terrain with a distance LOD, so
+  memory and draw calls stay flat however far you drive.
+- **Photographic textures** (asphalt, ground) from Poly Haven, CC0.
+- **Atmosphere**: distance fog, a gradient sky with a sun, soft contact
+  shadows and a banked road surface.
+
 ## Layout
 
 ```
@@ -65,7 +80,7 @@ index.html              entry point
 styles/                 base + game CSS
 src/core/               math, rng, loop, input, storage
 src/game/               road, vehicle, chunks, scene, renderer, camera,
-                        effects, audio, hud, menus, world, assets
+                        effects, audio, hud, menus, world, assets, noise
 src/net/                protocol, signalling, peer, session
 tests/                  node:test suite
 tools/serve.mjs         zero dependency static server
@@ -77,7 +92,8 @@ vendor/three/           vendored Three.js (core + addons)
 ## Assets
 
 The cars and scenery are CC0 models by Kenney, vendored in `assets/models/` so
-the game works offline. Procedural fallbacks are used when an asset is missing.
+the game works offline. The asphalt and ground textures are CC0 from Poly
+Haven. Procedural fallbacks are used when an asset is missing.
 
 ## License
 

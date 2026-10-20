@@ -9,7 +9,7 @@
  * The cache name carries a version, so a new deploy drops the old cache.
  */
 
-const VERSION = 'driftline-v2';
+const VERSION = 'driftline-v3';
 const CORE = [
   './',
   './index.html',

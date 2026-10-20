@@ -49,7 +49,6 @@ export const PROP_ASSETS = {
   treePine: { file: 'nature-kit/Models/GLTF format/tree_pineTallA.glb', height: 12 },
   treePineShort: { file: 'nature-kit/Models/GLTF format/tree_pineRoundA.glb', height: 8 },
   treePalm: { file: 'nature-kit/Models/GLTF format/tree_palmTall.glb', height: 10 },
-  treeThin: { file: 'nature-kit/Models/GLTF format/tree_thin.glb', height: 12 },
   bush: { file: 'nature-kit/Models/GLTF format/plant_bush.glb', height: 1.6 },
   bushSmall: { file: 'nature-kit/Models/GLTF format/plant_bushSmall.glb', height: 0.9 },
   rock: { file: 'nature-kit/Models/GLTF format/rock_largeA.glb', height: 2.4 },
@@ -112,6 +111,30 @@ function normalizeGeometry(geometry, material) {
  * @param {number} targetHeight desired height in metres (0 keeps the size)
  * @param {number} [length] desired length in metres
  */
+/**
+ * Reject a promise that takes too long.
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @param {string} label
+ * @returns {Promise<T>}
+ */
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timeout loading ${label}`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 function normalizeScene(root, targetHeight, length) {
   const box = new THREE.Box3().setFromObject(root);
   const size = new THREE.Vector3();
@@ -256,25 +279,27 @@ export function createAssetLibrary() {
      * @param {(loaded: number, total: number) => void} [onProgress]
      */
     async loadAll(onProgress) {
-      const jobs = [
-        ...Object.entries(CAR_ASSETS).map(async ([key, spec]) => {
-          const car = await loadCar(key, spec);
-          cars.set(key, car);
-        }),
-        ...Object.entries(PROP_ASSETS).map(async ([key, spec]) => {
-          const prop = await loadProp(key, spec);
-          props.set(key, prop);
-        }),
-      ];
+      const total = Object.keys(CAR_ASSETS).length + Object.keys(PROP_ASSETS).length;
       let done = 0;
-      await Promise.all(
-        jobs.map((job) =>
-          job.then(() => {
+      const track = (job) =>
+        job
+          .catch((err) => {
+            console.warn('[driftline] asset skipped', err?.message || err);
+          })
+          .finally(() => {
             done++;
-            onProgress?.(done, jobs.length);
-          }),
+            onProgress?.(done, total);
+          });
+
+      const jobs = [
+        ...Object.entries(CAR_ASSETS).map(([key, spec]) =>
+          track(withTimeout(loadCar(key, spec).then((car) => cars.set(key, car)), 15000, `car ${key}`)),
         ),
-      );
+        ...Object.entries(PROP_ASSETS).map(([key, spec]) =>
+          track(withTimeout(loadProp(key, spec).then((prop) => props.set(key, prop)), 15000, `prop ${key}`)),
+        ),
+      ];
+      await Promise.all(jobs);
       ready = true;
       return { cars, props };
     },

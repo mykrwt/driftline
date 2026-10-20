@@ -502,6 +502,33 @@ menus.show('title');
 applySettings();
 input.setEnabled(false);
 
+// Load the 3D assets in the background so the first race does not stutter.
+const loadingEl = doc.getElementById('loading');
+const loadingBar = doc.getElementById('loading-bar');
+const loadingLabel = doc.getElementById('loading-label');
+const finishLoading = () => {
+  loadingEl?.setAttribute('hidden', '');
+  loadingEl?.classList.add('is-done');
+};
+assets
+  .loadAll((loaded, total) => {
+    if (loadingBar) loadingBar.style.width = `${Math.round((loaded / total) * 100)}%`;
+    if (loadingLabel) loadingLabel.textContent = `Loading world ${loaded}/${total}`;
+  })
+  .then((result) => {
+    if (result?.failed) {
+      if (loadingLabel) loadingLabel.textContent = `Loaded with ${result.failed} asset${result.failed > 1 ? 's' : ''} missing - using fallbacks`;
+    }
+    finishLoading();
+  })
+  .catch((err) => {
+    console.error('[driftline] asset load failed', err);
+    if (loadingLabel) loadingLabel.textContent = 'Some assets failed to load - using fallback shapes';
+    setTimeout(finishLoading, 1200);
+  });
+// Never block the game behind a slow asset load.
+setTimeout(finishLoading, 12000);
+
 // Service worker for offline play (skipped on localhost during development).
 const isLocalDev = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 if ('serviceWorker' in navigator && location.protocol !== 'file:' && (!isLocalDev || location.search.includes('sw=1'))) {

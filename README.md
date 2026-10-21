@@ -59,6 +59,8 @@ that painless:
 ```bash
 npm run terrain:map -- 20260920 4000 out.png   # top down map of the land
 npm run scene:preview -- 20260920 120 out.png   # a software render of the scene
+npm run flythrough -- 20260920 8 out.png        # the drive, frame by frame
+npm run car:preview -- vector out.png           # the car, from three angles
 npm run bot:bench -- 4 90                      # how well the bot drives
 ```
 
@@ -68,6 +70,11 @@ npm run bot:bench -- 4 90                      # how well the bot drives
 - `scene:preview` renders the actual scene - terrain, road, sky, sun, fog -
   with a small software renderer, so a change can be judged in seconds
   without a browser.
+- `flythrough` renders the drive from the point of view of the car and puts
+  the frames into one sheet.
+- `car:preview` builds the same model the game builds and draws it with the
+  software renderer, so the silhouette of a car can be checked without a
+  browser.
 - `bot:bench` runs the driving bot over several seeds and reports how far it
   gets and how much time it spends off the road.
 
@@ -137,6 +144,10 @@ tests/                  node:test suite
 tools/serve.mjs         zero dependency static server
 tools/terrain-map.mjs   top down map of the world
 tools/scene-preview.mjs software renderer for the scene
+tools/flythrough.mjs    the drive, frame by frame
+tools/soft-render.mjs   the little software renderer
+tools/car-preview.mjs   the car, from three angles
+tools/png.mjs           a small PNG writer
 tools/bot-bench.mjs     driving bot benchmark
 tools/check-imports.mjs import checker
 assets/models/          CC0 asset packs (Kenney)

@@ -16,7 +16,8 @@
     "terrain:map": "node tools/terrain-map.mjs",
     "scene:preview": "node tools/scene-preview.mjs",
     "bot:bench": "node tools/bot-bench.mjs",
-    "car:preview": "node tools/car-preview.mjs"
+    "car:preview": "node tools/car-preview.mjs",
+    "flythrough": "node tools/flythrough.mjs"
   },
   "keywords": [
     "game",

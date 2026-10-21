@@ -331,7 +331,9 @@ export function createTerrainManager(options) {
     const placeTree = (key, x, y, z, rotation, scale) => {
       const impostor = options.getImpostor?.(key);
       if (!impostor) return;
-      dummy.position.set(x, y - 0.25, z);
+      // The trees are sunk into the ground a little, so they do not float
+      // above it on a slope.
+      dummy.position.set(x, y - 0.45, z);
       dummy.rotation.set(0, rotation, 0);
       dummy.scale.setScalar(scale);
       dummy.updateMatrix();
@@ -361,8 +363,9 @@ export function createTerrainManager(options) {
       const hz = surfaceHeight(profile, x, z + 3) - surfaceHeight(profile, x, z - 3);
       const slope = Math.hypot(hx, hz) / 6;
 
-      if (slope > 1.15 || altitude > 190) {
-        // Bare rock: only boulders and scree.
+      if (slope > 0.62 || altitude > 190) {
+        // Bare rock: only boulders and scree. A billboard on a steep slope
+        // would float above the ground, so nothing grows there.
         if (random() < 0.4) {
           place(random() < 0.5 ? 'rock' : 'rockSmall', x, y, z, random() * Math.PI * 2, 0.7 + random() * 0.9);
         }

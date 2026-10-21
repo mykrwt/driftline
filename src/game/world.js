@@ -156,6 +156,15 @@ export function createWorld(options) {
 
     // Keep the car on the road if it ends up in a ditch or on its roof.
     const info = roadInfo(profile, vehicle.position.x, vehicle.position.z);
+    const roadY = roadHeight(profile, vehicle.position.z);
+    // Off the world: too high after a launch or too far down a cliff. The
+    // car is put back on the road instead of being lost.
+    const lost =
+      vehicle.position.y > roadY + 45 || vehicle.position.y < roadY - 40;
+    if (lost) {
+      respawn();
+      return;
+    }
     const upsideDown = vehicle.quaternion.y < 0.1 && vehicle.speed < 4;
     if (upsideDown) {
       stuckTimer += dt;
@@ -239,6 +248,9 @@ export function createWorld(options) {
    */
   function render(dt) {
     elapsed += dt;
+    // The speed blur and the field of view follow the speed.
+    const speedRatio = clamp(vehicle.speed / 62, 0, 1);
+    renderer.setSpeed?.(clamp((speedRatio - 0.45) / 0.55, 0, 1) * 0.85);
     // The car model follows the chassis exactly.
     carRoot.position.copy(vehicle.position);
     carRoot.quaternion.copy(vehicle.quaternion);

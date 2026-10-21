@@ -6,7 +6,7 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
-import { createRoadTexture } from './models.js';
+import { createRoadTexture, createGroundNormalMap } from './models.js';
 import { createChunkManager } from './chunks.js';
 import { createTerrainManager } from './terrain.js';
 import { roadHeight } from './road.js';
@@ -182,6 +182,13 @@ export function createWorldScene(profile, options) {
     vertexColors: true,
   });
 
+  // The ground has a normal map, so the sun finds something to catch on the
+  // grass and on the rock instead of lighting a flat colour.
+  const groundNormal = createGroundNormalMap(256, 2.2);
+  groundNormal.repeat.set(1, 1);
+  terrainMaterial.normalMap = groundNormal;
+  terrainMaterial.normalScale = new THREE.Vector2(0.85, 0.85);
+
   // The photographic ground tile is used as a *detail* layer: it modulates
   // the vertex colour instead of replacing it, which keeps the palette
   // readable instead of turning everything into mud.
@@ -319,6 +326,7 @@ export function createWorldScene(profile, options) {
       chunks.dispose();
       terrain.dispose();
       water.dispose();
+      groundNormal.dispose();
       roadTexture.dispose();
       roadMaterial.dispose();
       terrainMaterial.dispose();

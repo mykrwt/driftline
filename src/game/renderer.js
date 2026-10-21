@@ -162,6 +162,13 @@ export function createRenderer(canvas, options = {}) {
       autoQuality = value;
     },
     /**
+     * How fast the world is rushing past, for the speed blur.
+     * @param {number} value 0..1
+     */
+    setSpeed(value) {
+      post.setSpeed?.(value);
+    },
+    /**
      * The tone mapping exposure, driven by the day and night palettes.
      * @param {number} value
      */

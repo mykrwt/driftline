@@ -247,6 +247,80 @@ export function createSmokeTexture() {
 }
 
 /**
+ * A tiling normal map for the ground.
+ *
+ * The terrain is one huge surface, so it needs something under the sun
+ * besides a flat colour. The map is built from a tileable value noise: the
+ * height of every texel becomes a normal, which makes the grass and the
+ * rock catch the light.
+ *
+ * @param {number} [size]
+ * @param {number} [scale] how strong the bumps are
+ * @returns {THREE.CanvasTexture}
+ */
+export function createGroundNormalMap(size = 256, scale = 2.4) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(size, size);
+  const data = image.data;
+
+  // A tileable value noise: the lattice wraps, so the texture repeats.
+  const lattice = 16;
+  const grid = new Float32Array(lattice * lattice);
+  for (let i = 0; i < grid.length; i++) grid[i] = Math.random();
+  const at = (x, y) =>
+    grid[
+      (((y % lattice) + lattice) % lattice) * lattice +
+        (((x % lattice) + lattice) % lattice)
+    ];
+  const smooth = (t) => t * t * (3 - 2 * t);
+  const height = (u, v) => {
+    const x = u * lattice;
+    const y = v * lattice;
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    const tx = smooth(x - xi);
+    const ty = smooth(y - yi);
+    const a = at(xi, yi);
+    const b = at(xi + 1, yi);
+    const c = at(xi, yi + 1);
+    const d = at(xi + 1, yi + 1);
+    return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+  };
+  const field = (u, v) =>
+    height(u, v) * 0.7 + height(u * 4, v * 4) * 0.3 + height(u * 11, v * 11) * 0.12;
+
+  const e = 1 / size;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const v = y / size;
+      let nx = -(field(u + e, v) - field(u - e, v)) * scale;
+      let ny = -(field(u, v + e) - field(u, v - e)) * scale;
+      let nz = 1;
+      const length = Math.hypot(nx, ny, nz) || 1;
+      nx /= length;
+      ny /= length;
+      nz /= length;
+      const index = (y * size + x) * 4;
+      data[index] = (nx * 0.5 + 0.5) * 255;
+      data[index + 1] = (ny * 0.5 + 0.5) * 255;
+      data[index + 2] = (nz * 0.5 + 0.5) * 255;
+      data[index + 3] = 255;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
  * Asphalt texture with lane markings (tiles seamlessly along the road).
  * @param {{ road: string, lane: string, rumbleA: string, rumbleB: string }} palette
  * @param {HTMLImageElement | null} [baseImage] an optional photographic asphalt base

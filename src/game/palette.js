@@ -85,6 +85,7 @@ export const GROUND = {
   rockDark: '#4f535c',
   scree: '#8d8c85',
   snow: '#e8eef8',
+  gravel: '#8c8577',
 };
 
 /**
@@ -128,6 +129,7 @@ export function groundColour(slope, altitude, dist, patch, rockPatch, out) {
   const grassDark = hexToRgb(GROUND.grassDark);
   const scrub = hexToRgb(GROUND.scrub);
   const dirt = hexToRgb(GROUND.dirt);
+  const gravel = hexToRgb(GROUND.gravel);
   const rock = hexToRgb(GROUND.rock);
   const rockDark = hexToRgb(GROUND.rockDark);
   const scree = hexToRgb(GROUND.scree);
@@ -146,6 +148,10 @@ export function groundColour(slope, altitude, dist, patch, rockPatch, out) {
   // Bare earth along the verge.
   const verge = Math.max(0, Math.min(1, (16 - dist) / 12));
   mixInto(out, dirt, verge * 0.5 * (1 - slope), out);
+
+  // A gravel shoulder right at the edge of the tarmac.
+  const shoulder = Math.max(0, Math.min(1, (2.6 - dist) / 2.2));
+  mixInto(out, gravel, shoulder * 0.8 * (1 - slope * 0.5), out);
 
   // Rock on the steep ground.
   const rockAmount = Math.max(0, Math.min(1, (slope - 0.3) * 2.6));

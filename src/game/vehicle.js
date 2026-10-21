@@ -18,6 +18,12 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, sign } from '../core/math.js';
 
 const GRAVITY = 9.81;
+/** The fastest a car may be thrown upwards, in metres per second. */
+const MAX_LAUNCH = 16;
+/** The fastest a car may fall, in metres per second. */
+const MAX_FALL = 70;
+/** The fastest the chassis may spin, in radians per second. */
+const MAX_SPIN = 9;
 
 /**
  * @typedef {object} WheelSpec
@@ -527,6 +533,15 @@ export function stepVehicle(state, input, groundAt, dt) {
   state.speed = newSpeed;
   state.odometer += Math.abs(forwardSpeed) * dt;
   state.airborne = groundedCount === 0 ? Math.min(1, state.airborne + dt * 2) : Math.max(0, state.airborne - dt * 4);
+
+  // A car that drives into a cliff at full speed would be turned into a
+  // rocket by the contact forces. The vertical speed is capped so a launch
+  // stays a jump instead of a trip to the moon.
+  if (state.velocity.y > MAX_LAUNCH) state.velocity.y = MAX_LAUNCH;
+  if (state.velocity.y < -MAX_FALL) state.velocity.y = -MAX_FALL;
+  // The spin is capped as well, so a tumble cannot become a blender.
+  const spin = state.angularVelocity.length();
+  if (spin > MAX_SPIN) state.angularVelocity.multiplyScalar(MAX_SPIN / spin);
 
   // The chassis slip angle: the angle between where the car points and where
   // it is actually going. That is the drift.

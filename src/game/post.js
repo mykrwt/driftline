@@ -57,6 +57,7 @@ uniform float bloomStrength;
 uniform float vignette;
 uniform float saturation;
 uniform float contrast;
+uniform float speed;
 uniform vec2 resolution;
 varying vec2 vUv;
 
@@ -65,12 +66,29 @@ void main() {
   vec2 centred = uv - 0.5;
   float radius = length(centred);
 
+  // At speed the edges of the screen smear outwards, which reads as velocity
+  // without touching the physics.
+  vec3 color;
+  if (speed > 0.01) {
+    float amount = speed * 0.022 * radius * radius;
+    color = vec3(0.0);
+    for (int i = 0; i < 5; i++) {
+      float t = float(i) / 4.0;
+      vec2 offset = centred * amount * t;
+      float weight = 1.0 - t * 0.6;
+      color.r += texture2D(tScene, uv + offset).r * weight;
+      color.g += texture2D(tScene, uv + offset).g * weight;
+      color.b += texture2D(tScene, uv + offset).b * weight;
+    }
+    color /= 2.2;
+  } else {
+    color = texture2D(tScene, uv).rgb;
+  }
+
   // A little chromatic aberration towards the edges of the screen.
   float amount = 0.0016 * radius * radius;
-  vec3 color;
-  color.r = texture2D(tScene, uv + centred * amount).r;
-  color.g = texture2D(tScene, uv).g;
-  color.b = texture2D(tScene, uv - centred * amount).b;
+  color.r = mix(color.r, texture2D(tScene, uv + centred * amount).r, 0.5);
+  color.b = mix(color.b, texture2D(tScene, uv - centred * amount).b, 0.5);
 
   vec3 bloom = texture2D(tBloom, uv).rgb;
   color += bloom * bloomStrength;
@@ -160,6 +178,7 @@ export function createPost(options) {
       vignette: { value: state.vignette },
       saturation: { value: state.saturation },
       contrast: { value: state.contrast },
+      speed: { value: 0 },
       resolution: { value: new THREE.Vector2(width, height) },
     },
     vertexShader: QUAD_VERTEX,
@@ -215,6 +234,12 @@ export function createPost(options) {
   return {
     state,
     render,
+    /**
+     * @param {number} value 0 = parked, 1 = flat out
+     */
+    setSpeed(value) {
+      compositeMaterial.uniforms.speed.value = value;
+    },
     /**
      * @param {number} w @param {number} h @param {number} ratio
      */

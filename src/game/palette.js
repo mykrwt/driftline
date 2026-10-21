@@ -160,12 +160,12 @@ export function groundColour(slope, altitude, dist, patch, rockPatch, out) {
 
   // Outcrops: the mountain breaks through the turf in patches, which is what
   // makes a slope read as rock instead of as a green ramp.
-  const outcrop = Math.max(0, Math.min(1, (rockPatch - 0.52) * 3.2)) * Math.min(1, altitude / 25);
-  mixInto(out, rock, outcrop * 0.85, out);
+  const outcrop = Math.max(0, Math.min(1, (rockPatch - 0.48) * 3.6)) * Math.min(1, altitude / 22);
+  mixInto(out, rock, outcrop * 0.9, out);
   // Horizontal strata break the cliffs up into layers of rock.
   const strata = 0.5 + 0.5 * Math.sin(altitude * 0.32 + rockPatch * 7);
-  mixInto(out, rockDark, outcrop * 0.42 * strata, out);
-  mixInto(out, scree, outcrop * 0.2 * (1 - strata), out);
+  mixInto(out, rockDark, outcrop * 0.5 * strata, out);
+  mixInto(out, scree, outcrop * 0.28 * (1 - strata), out);
 
   const screeAmount = Math.max(0, Math.min(1, (altitude - 90) / 140)) * (1 - rockAmount * 0.4);
   mixInto(out, scree, screeAmount * 0.45, out);

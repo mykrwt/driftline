@@ -267,9 +267,13 @@ export function terrainRelief(profile, s, lateral) {
   // It only starts well away from the road, so the valley floor stays open.
   const away = smoothstep(clamp((dist - 16) / 55, 0, 1));
   const ridge = ridged(x * 0.0011 + side * 2.7, s * 0.0011, 4, seed + 37);
-  const peaks = Math.max(0, ridge - 0.3) * 430 * away;
+  const peaks = Math.max(0, ridge - 0.16) * 380 * away;
   const ridge2 = ridged(x * 0.0034 + side * 5.1, s * 0.0034, 3, seed + 43);
-  const peaks2 = Math.max(0, ridge2 - 0.34) * 165 * away;
+  const peaks2 = Math.max(0, ridge2 - 0.2) * 190 * away;
+  // A third scale of ridges: the shoulders and the buttresses that break up
+  // the face of a mountain.
+  const ridge3 = ridged(x * 0.0072 + side * 8.3, s * 0.0072, 3, seed + 47);
+  const peaks3 = Math.max(0, ridge3 - 0.26) * 95 * away;
   const shoulders = fbm(x * 0.0026, s * 0.0026, 4, seed + 5) * 42 * away;
 
   // Rolling ground that reaches almost to the verge.
@@ -289,7 +293,7 @@ export function terrainRelief(profile, s, lateral) {
   // Fine bumps so the surface never reads as a smooth sheet.
   const detail = fbm(x * 0.085, s * 0.085, 2, seed + 131) * 0.85 * smoothstep(clamp(dist / 6, 0, 1));
 
-  return valley + peaks + peaks2 + shoulders + roll + basin + crags + rubble + detail;
+  return valley + peaks + peaks2 + peaks3 + shoulders + roll + basin + crags + rubble + detail;
 }
 
 /**

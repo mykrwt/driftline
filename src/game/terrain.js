@@ -37,7 +37,6 @@ export const TERRAIN_AHEAD = 6;
 export const TERRAIN_COLUMNS = [
   0, 2.2, 5, 9, 14, 20, 28, 38, 50, 65, 84, 104, 126, 150, 176, 205, 236, 270, 306, 345, 388, 434, 484, 538, 596, 658, 725, 800, 880, 965,
 ];
-
 /** Row spacing (metres) for the chunks close to the player. */
 const ROW_NEAR = 5;
 /** Row spacing for the middle distance. */
@@ -179,7 +178,7 @@ export function createTerrainManager(options) {
         const altitude = y - roadY;
         const dist = Math.abs(lateral) - roadHalfWidth(profile, s);
         const patch = fbm(x * 0.013, s * 0.013, 3, seed + 17) * 0.5 + 0.5;
-        const rockPatch = fbm(x * 0.0055, s * 0.0055, 3, seed + 61) * 0.5 + 0.5;
+        const rockPatch = fbm(x * 0.011, s * 0.011, 3, seed + 61) * 0.5 + 0.5;
         groundColour(slope, altitude, dist, patch, rockPatch, colour);
         colors[index] = colour[0];
         colors[index + 1] = colour[1];
@@ -350,9 +349,9 @@ export function createTerrainManager(options) {
       // Trees live between the verge and the tree line, rocks anywhere.
       const spread = random();
       const distance =
-        spread < 0.55
+        spread < 0.5
           ? half + 3 + random() * 30
-          : half + 30 + Math.pow(random(), 0.7) * 240;
+          : half + 30 + Math.pow(random(), 0.7) * 380;
       const x = centre + side * distance;
       const z = s;
       const y = surfaceHeight(profile, x, z);

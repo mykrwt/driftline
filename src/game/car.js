@@ -434,19 +434,21 @@ export function createCar(config, ghost = false) {
   // --- contact shadow ----------------------------------------------------
   // A soft blob under the car. The shadow map does the real work, this only
   // keeps the car anchored when the map is off.
-  const shadow = new THREE.Mesh(
-    new THREE.PlaneGeometry(shape.width * 1.35, shape.length * 1.02),
-    new THREE.MeshBasicMaterial({
-      map: getShadowTexture(),
-      transparent: true,
-      opacity: 0.42,
-      depthWrite: false,
-    }),
-  );
-  shadow.rotation.x = -Math.PI / 2;
-  shadow.position.y = 0.02;
-  shadow.renderOrder = 1;
-  group.add(shadow);
+  if (typeof document !== 'undefined') {
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(shape.width * 1.35, shape.length * 1.02),
+      new THREE.MeshBasicMaterial({
+        map: getShadowTexture(),
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false,
+      }),
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.02;
+    shadow.renderOrder = 1;
+    group.add(shadow);
+  }
 
   group.userData.wheels = wheels;
   group.userData.frontWheels = wheels.slice(0, 2);

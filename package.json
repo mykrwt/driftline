@@ -15,7 +15,8 @@
     "check:imports": "node tools/check-imports.mjs",
     "terrain:map": "node tools/terrain-map.mjs",
     "scene:preview": "node tools/scene-preview.mjs",
-    "bot:bench": "node tools/bot-bench.mjs"
+    "bot:bench": "node tools/bot-bench.mjs",
+    "car:preview": "node tools/car-preview.mjs"
   },
   "keywords": [
     "game",

@@ -231,11 +231,11 @@ export function createCar(config, ghost = false) {
     opacity: ghost ? 0.5 : 1,
   });
   const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x0b1424,
-    roughness: 0.06,
-    metalness: 0.9,
+    color: 0x0c1626,
+    roughness: 0.12,
+    metalness: 0.55,
     transparent: true,
-    opacity: ghost ? 0.4 : 0.94,
+    opacity: ghost ? 0.42 : 0.97,
   });
   const tyreMat = new THREE.MeshStandardMaterial({ color: 0x121317, roughness: 0.95, metalness: 0 });
   const trimMat = new THREE.MeshStandardMaterial({ color: 0x1b1e25, roughness: 0.6, metalness: 0.35 });
@@ -253,9 +253,8 @@ export function createCar(config, ghost = false) {
   group.add(shell);
 
   // --- glasshouse --------------------------------------------------------
-  const glass = new THREE.Mesh(loftGeometry(shape.cabin), glassMat);
-  glass.castShadow = true;
-  group.add(glass);
+  // The glass is only the window band. The roof above it and the body below
+  // it are solid, so the cabin does not look like a bubble.
 
   // The roof is a shell that follows the shape of the glass, so it never
   // floats above it.
@@ -280,9 +279,14 @@ export function createCar(config, ghost = false) {
   group.add(windows);
 
   // --- racing stripe -----------------------------------------------------
-  const bodyTop = Math.max(...shape.body.map((ring) => ring[3]));
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.02, shape.length * 0.8), accentMat);
-  stripe.position.set(0, bodyTop + 0.004, 0);
+  // The stripe follows the top of the body, so it never floats over the nose.
+  const stripeRings = shape.body.map(([z, halfWidth, bottom, top]) => [
+    z,
+    halfWidth * 0.16,
+    top - 0.03,
+    top + 0.005,
+  ]);
+  const stripe = new THREE.Mesh(loftGeometry(stripeRings), accentMat);
   group.add(stripe);
 
   // The mirrors sit on the widest point of the cabin.
@@ -382,9 +386,9 @@ export function createCar(config, ghost = false) {
   // --- wheels ------------------------------------------------------------
   const tyreGeo = new THREE.CylinderGeometry(shape.wheelRadius, shape.wheelRadius, shape.wheelWidth, 18);
   tyreGeo.rotateZ(Math.PI / 2);
-  const rimGeo = new THREE.CylinderGeometry(shape.wheelRadius * 0.58, shape.wheelRadius * 0.58, shape.wheelWidth * 1.02, 12);
+  const rimGeo = new THREE.CylinderGeometry(shape.wheelRadius * 0.62, shape.wheelRadius * 0.62, shape.wheelWidth * 1.12, 12);
   rimGeo.rotateZ(Math.PI / 2);
-  const hubGeo = new THREE.CylinderGeometry(shape.wheelRadius * 0.2, shape.wheelRadius * 0.2, shape.wheelWidth * 1.06, 8);
+  const hubGeo = new THREE.CylinderGeometry(shape.wheelRadius * 0.22, shape.wheelRadius * 0.22, shape.wheelWidth * 1.2, 8);
   hubGeo.rotateZ(Math.PI / 2);
   const spokeGeo = new THREE.BoxGeometry(shape.wheelWidth * 1.04, shape.wheelRadius * 1.02, 0.07);
 
@@ -410,6 +414,12 @@ export function createCar(config, ghost = false) {
       spoke.rotation.x = (i / 5) * Math.PI;
       wheel.add(spoke);
     }
+    // A brake disc, so the wheel is not a black hole from the side.
+    const disc = new THREE.Mesh(
+      new THREE.CylinderGeometry(shape.wheelRadius * 0.5, shape.wheelRadius * 0.5, shape.wheelWidth * 0.6, 12),
+      trimMat,
+    );
+    wheel.add(disc);
     wheel.position.set(x, y, z);
     wheels.push(wheel);
     group.add(wheel);

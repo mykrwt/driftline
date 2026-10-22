@@ -290,6 +290,34 @@ export function createTerrainManager(options) {
   }
 
   /**
+   * The height of the ribbon mesh at a point.
+   *
+   * The mesh is a grid, so the ground between two columns is a straight
+   * line while the real terrain is not. A prop that is placed on the real
+   * terrain can therefore float above the mesh on a steep slope. This
+   * interpolates the same way the mesh does.
+   *
+   * @param {number} s
+   * @param {number} lateral
+   * @returns {number}
+   */
+  function ribbonHeight(s, lateral) {
+    const centre = roadOffset(profile, s);
+    const half = roadHalfWidth(profile, s);
+    const distance = Math.abs(lateral) - half;
+    if (distance <= 0) return surfaceHeight(profile, centre + lateral, s);
+    const columns = TERRAIN_COLUMNS;
+    let index = 0;
+    while (index < columns.length - 2 && columns[index + 1] < distance) index++;
+    const span = Math.max(0.001, columns[index + 1] - columns[index]);
+    const t = Math.min(1, (distance - columns[index]) / span);
+    const sign = lateral < 0 ? -1 : 1;
+    const low = surfaceHeight(profile, centre + sign * (columns[index] + half), s);
+    const high = surfaceHeight(profile, centre + sign * (columns[index + 1] + half), s);
+    return low + (high - low) * t;
+  }
+
+  /**
    * Scatter the vegetation and the rocks over the ribbon.
    *
    * The trees are billboards: the model is baked into a texture once and
@@ -366,7 +394,8 @@ export function createTerrainManager(options) {
           : half + 30 + Math.pow(random(), 0.7) * 380;
       const x = centre + side * distance;
       const z = s;
-      const y = surfaceHeight(profile, x, z);
+      // The props stand on the mesh, not on the real terrain.
+      const y = ribbonHeight(s, side * distance);
       const altitude = y - roadHeight(profile, s);
 
       // The slope decides whether anything can grow here.

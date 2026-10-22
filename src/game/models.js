@@ -337,7 +337,7 @@ export function createRoadTexture(palette, baseImage = null) {
     // Photographic asphalt. It is lifted and cooled a little, because the
     // photo is almost black and the tarmac has to read as grey.
     ctx.drawImage(baseImage, 0, 0, size, size);
-    ctx.fillStyle = 'rgba(196, 202, 214, 0.3)';
+    ctx.fillStyle = 'rgba(206, 212, 222, 0.45)';
     ctx.fillRect(0, 0, size, size);
   } else {
     ctx.fillStyle = palette.road;

@@ -209,7 +209,7 @@ export function createWorldScene(profile, options) {
           vec4 detailTexel = texture2D( map, vMapUv );
           // The tile is a detail layer: it breaks up the flat vertex colour
           // without taking the palette away.
-          vec3 detail = mix( vec3( 1.0 ), detailTexel.rgb * 3.4, 0.62 );
+          vec3 detail = mix( vec3( 1.0 ), detailTexel.rgb * 3.4, 0.55 );
           diffuseColor.rgb *= detail;
         #endif
         `,

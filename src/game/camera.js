@@ -65,15 +65,15 @@ export function updateCamera(camera, vehicle, dt, immediate = false) {
 
   const speedRatio = clamp(speed / 62, 0, 1);
   // The camera pulls back and rises a little with the speed.
-  const back = 8.4 + speedRatio * 3.2;
-  const height = 3.35 + speedRatio * 0.55;
+  const back = 6.9 + speedRatio * 2.6;
+  const height = 2.55 + speedRatio * 0.5;
   const targetX = position.x - Math.sin(heading) * back;
   const targetZ = position.z - Math.cos(heading) * back;
   const targetY = position.y + height;
 
   // Look ahead down the road, not at the car: that keeps the corner in
   // frame and makes the car feel like it is going somewhere.
-  const lookAhead = 17 + speedRatio * 16;
+  const lookAhead = 15 + speedRatio * 14;
   const lookX = position.x + Math.sin(heading) * lookAhead;
   const lookZ = position.z + Math.cos(heading) * lookAhead;
   const lookY = position.y + 1.25 - speedRatio * 0.4;

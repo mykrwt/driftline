@@ -91,6 +91,8 @@ export function createTerrainManager(options) {
   // The trees are baked into a texture when the assets are ready. A race can
   // start before they are, so the chunks are rebuilt once they are.
   let treesReady = false;
+  // The chunk the player is in: it decides the level of detail around him.
+  let currentChunk = 0;
 
   /**
    * The row spacing for a chunk, based on how far away it is.
@@ -182,8 +184,8 @@ export function createTerrainManager(options) {
         normals[index + 2] = nz / length;
 
         const uvIndex = i * 2;
-        uvs[uvIndex] = lateral / 12;
-        uvs[uvIndex + 1] = s / 12;
+        uvs[uvIndex] = lateral / 8;
+        uvs[uvIndex + 1] = s / 8;
 
         // Colour from the slope and the altitude.
         const slope = Math.min(1, Math.hypot(nx, nz) / Math.max(0.001, ny) / 1.9);
@@ -292,16 +294,36 @@ export function createTerrainManager(options) {
   /**
    * The height of the ribbon mesh at a point.
    *
-   * The mesh is a grid, so the ground between two columns is a straight
-   * line while the real terrain is not. A prop that is placed on the real
-   * terrain can therefore float above the mesh on a steep slope. This
-   * interpolates the same way the mesh does.
+   * The mesh is a grid: the ground between two columns and between two rows
+   * is a straight line, while the real terrain is not. A prop that is placed
+   * on the real terrain can therefore float above the mesh or sink into it.
+   * This interpolates exactly the way the mesh does.
    *
    * @param {number} s
    * @param {number} lateral
    * @returns {number}
    */
   function ribbonHeight(s, lateral) {
+    const chunk = Math.floor(s / TERRAIN_CHUNK_LENGTH);
+    const startS = chunk * TERRAIN_CHUNK_LENGTH;
+    const wanted = rowStep(Math.abs(chunk - currentChunk));
+    const rows = Math.max(2, Math.round(TERRAIN_CHUNK_LENGTH / wanted)) + 1;
+    const step = TERRAIN_CHUNK_LENGTH / (rows - 1);
+    const row = (s - startS) / step;
+    const r0 = Math.floor(row);
+    const t = row - r0;
+    const low = columnHeight(startS + r0 * step, lateral);
+    const high = columnHeight(startS + Math.min(rows - 1, r0 + 1) * step, lateral);
+    return low + (high - low) * t;
+  }
+
+  /**
+   * The height of one column of the ribbon, interpolated sideways.
+   * @param {number} s
+   * @param {number} lateral
+   * @returns {number}
+   */
+  function columnHeight(s, lateral) {
     const centre = roadOffset(profile, s);
     const half = roadHalfWidth(profile, s);
     const distance = Math.abs(lateral) - half;
@@ -310,11 +332,11 @@ export function createTerrainManager(options) {
     let index = 0;
     while (index < columns.length - 2 && columns[index + 1] < distance) index++;
     const span = Math.max(0.001, columns[index + 1] - columns[index]);
-    const t = Math.min(1, (distance - columns[index]) / span);
+    const mix = Math.min(1, Math.max(0, (distance - columns[index]) / span));
     const sign = lateral < 0 ? -1 : 1;
     const low = surfaceHeight(profile, centre + sign * (columns[index] + half), s);
     const high = surfaceHeight(profile, centre + sign * (columns[index + 1] + half), s);
-    return low + (high - low) * t;
+    return low + (high - low) * mix;
   }
 
   /**
@@ -351,7 +373,7 @@ export function createTerrainManager(options) {
     const place = (key, x, y, z, rotation, scale) => {
       const asset = assets.prop?.(key);
       if (!asset) return;
-      dummy.position.set(x, y - 0.15, z);
+      dummy.position.set(x, y - 0.25, z);
       dummy.rotation.set(0, rotation, 0);
       dummy.scale.setScalar(scale);
       dummy.updateMatrix();
@@ -530,6 +552,7 @@ export function createTerrainManager(options) {
      * @param {number} playerS
      */
     update(playerS) {
+      currentChunk = Math.floor(playerS / TERRAIN_CHUNK_LENGTH);
       if (!treesReady && options.getImpostor?.('treeOak')) {
         treesReady = true;
         for (const index of Array.from(chunks.keys())) releaseChunk(index);

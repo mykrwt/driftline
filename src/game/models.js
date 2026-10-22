@@ -366,7 +366,7 @@ export function createRoadTexture(palette, baseImage = null) {
   ctx.fillStyle = '#eef2ff';
   ctx.globalAlpha = 0.8;
   for (let i = 0; i < 2; i++) {
-    ctx.fillRect(size / 2 - 5, i * (size / 2), 10, size / 5);
+    ctx.fillRect(size / 2 - 5, i * (size / 2) + size * 0.12, 10, size / 7);
   }
   ctx.globalAlpha = 1;
 

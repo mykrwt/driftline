@@ -488,9 +488,12 @@ export function createAssetLibrary() {
       box.getSize(dimensions);
       box.getCenter(centre);
 
-      // Light the preview so the baked texture has the real colours.
-      preview.add(new THREE.HemisphereLight(0xbfd7ff, 0x4a5240, 2.1));
-      const keyLight = new THREE.DirectionalLight(0xfff2d6, 2.2);
+      // Light the preview so the baked texture has the real colours. The
+      // light is flat on purpose: a tree that is baked with a hard key light
+      // comes out half black.
+      preview.add(new THREE.HemisphereLight(0xbfd7ff, 0x6a7a62, 2.6));
+      preview.add(new THREE.AmbientLight(0xffffff, 1.1));
+      const keyLight = new THREE.DirectionalLight(0xfff2d6, 1.5);
       keyLight.position.set(centre.x + 30, centre.y + 40, 40);
       preview.add(keyLight);
 
@@ -531,6 +534,11 @@ export function createAssetLibrary() {
         side: THREE.DoubleSide,
         roughness: 0.95,
         metalness: 0,
+        // The texture lights itself a little, so a tree in the shade of a
+        // mountain does not turn into a black blob.
+        emissive: new THREE.Color(0x2b3328),
+        emissiveMap: target.texture,
+        emissiveIntensity: 0.55,
       });
       // A gentle wind sway keeps the far forest alive.
       const timeUniform = { value: 0 };

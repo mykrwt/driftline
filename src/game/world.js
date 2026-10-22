@@ -346,6 +346,15 @@ export function createWorld(options) {
     respawn,
     setGhosts,
     /**
+     * The height of the ground at a world position.
+     * @param {number} x
+     * @param {number} z
+     * @returns {number}
+     */
+    groundAt(x, z) {
+      return groundAt(x, z);
+    },
+    /**
      * Hand the controls over to the driving bot.
      * @param {boolean} value
      */

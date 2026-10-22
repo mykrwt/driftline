@@ -121,14 +121,34 @@ export function createSelfTest(driftline) {
     // textured, otherwise the forest is invisible.
     let trees = 0;
     let treeTexture = false;
+    let floating = 0;
+    let checked = 0;
+    let worst = 0;
     world.scene.scene.traverse((object) => {
       if (object.isInstancedMesh && object.material?.alphaTest > 0) {
         trees += object.count;
         if (object.material.map) treeTexture = true;
+        // Every prop has to stand on the ground.
+        const data = object.instanceMatrix.array;
+        for (let i = 0; i < object.count; i++) {
+          const x = data[i * 16 + 12];
+          const y = data[i * 16 + 13];
+          const z = data[i * 16 + 14];
+          const ground = world.groundAt(x, z);
+          const offset = Math.abs(y - ground);
+          checked++;
+          if (offset > worst) worst = offset;
+          if (offset > 2.5) floating++;
+        }
       }
     });
     check('the trees are there', trees > 10, `${trees} trees`);
     check('the trees are textured', treeTexture, treeTexture ? 'ok' : 'no texture');
+    check(
+      'the props stand on the ground',
+      floating === 0,
+      `${floating} of ${checked} float, the worst by ${worst.toFixed(1)} m`,
+    );
 
     // --- the drift -----------------------------------------------------
     world.setAutopilot(false);

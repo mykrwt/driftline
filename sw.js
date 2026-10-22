@@ -9,7 +9,7 @@
  * The cache name carries a version, so a new deploy drops the old cache.
  */
 
-const VERSION = 'driftline-v4';
+const VERSION = 'driftline-v5';
 const CORE = [
   './',
   './index.html',
@@ -80,9 +80,11 @@ self.addEventListener('fetch', (event) => {
   const isAppCode = /\.(?:html|js|css|webmanifest)$/.test(url.pathname);
 
   if (isAppCode) {
-    // Network first: always try to serve the newest build.
+    // Network first: always try to serve the newest build. The cache is
+    // bypassed, because the browser would otherwise answer with its own
+    // (possibly stale) copy of the module.
     event.respondWith(
-      fetch(request)
+      fetch(request, { cache: 'reload' })
         .then((response) => {
           if (response && response.status === 200) {
             const copy = response.clone();

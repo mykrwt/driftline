@@ -15,7 +15,7 @@ import {
   roadHeight,
   roadHalfWidth,
   roadBank,
-  roadSlope,
+  roadHeading,
   surfaceHeight,
   driftFactor,
 } from './road.js';
@@ -199,53 +199,57 @@ export function createChunkManager(options) {
       }
 
       // Guard rails where the ground falls away from the road: they make
-      // the drop-offs readable and keep the car on the tarmac.
+      // the drop-offs readable and keep the car on the tarmac. The rail
+      // runs along the road, so it follows the road's heading.
       if (i % 2 === 0) {
+        const heading = roadHeading(profile, s);
         for (const side of [-1, 1]) {
           const edgeX = centre + side * (half + 1.1);
           const outsideY = surfaceHeight(profile, centre + side * (half + 6), s);
           if (roadY - outsideY < 1.1) continue;
           const y = surfaceHeight(profile, edgeX, s);
-          const angle = Math.atan(roadSlope(profile, s));
-          place(side > 0 ? 'barrierWhite' : 'barrier', edgeX, y, s, -angle * side, 1);
+          place('rail', edgeX, y, s, heading, 1);
         }
       }
 
       // Drift areas get cones and barriers on the wide tarmac.
       if (drift > 0.25) {
+        const heading = roadHeading(profile, s);
         if (random() < 0.45) {
           const side = random() < 0.5 ? -1 : 1;
           const distance = half * (0.55 + random() * 0.4);
           const x = centre + side * distance;
           const z = s + (random() - 0.5) * SEGMENT_LENGTH;
           const y = surfaceHeight(profile, x, z);
-          place('cone', x, y, z, 0, 0.9 + random() * 0.2);
+          place('cone', x, y, z, heading, 0.9 + random() * 0.2);
         }
         if (random() < 0.18) {
           const side = random() < 0.5 ? -1 : 1;
           const x = centre + side * (half + 1.2);
           const z = s;
           const y = surfaceHeight(profile, x, z);
-          place('barrier', x, y, z, 0, 1);
+          place('barrier', x, y, z, heading, 1);
         }
       }
 
-      // Lamps along the road every few segments.
+      // Lamps along the road every few segments. The arm of the lamp points
+      // over the road, so the lamp is turned to face the tarmac.
       if (i % 7 === 0) {
         const side = random() < 0.5 ? -1 : 1;
         const x = centre + side * (half + 1.6);
         const z = s;
         const y = surfaceHeight(profile, x, z);
-        place('lightPost', x, y, z, 0, 1);
+        place('lightPost', x, y, z, roadHeading(profile, s) - (side * Math.PI) / 2, 1);
       }
 
-      // A sign every few hundred metres, so the speed is readable.
+      // A sign every few hundred metres, so the speed is readable. The
+      // plate stands across the road and faces the driver.
       if (s > 0 && s % 400 < SEGMENT_LENGTH) {
         const side = random() < 0.5 ? -1 : 1;
         const x = centre + side * (half + 2.2);
         const z = s;
         const y = surfaceHeight(profile, x, z);
-        place('sign', x, y, z, 0, 1);
+        place('sign', x, y, z, roadHeading(profile, s) + (side > 0 ? Math.PI : 0), 1);
       }
     }
 

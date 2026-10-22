@@ -64,6 +64,8 @@ export const PROP_ASSETS = {
   cone: { file: 'city-kit-roads/Models/GLTF format/construction-cone.glb', height: 0.9, keepScene: true },
   barrier: { file: 'racing-kit/Models/GLTF format/barrierRed.glb', height: 1.1, keepScene: true },
   barrierWhite: { file: 'racing-kit/Models/GLTF format/barrierWhite.glb', height: 1.1, keepScene: true },
+  rail: { file: 'racing-kit/Models/GLTF format/rail.glb', height: 1.1, keepScene: true },
+  fence: { file: 'racing-kit/Models/GLTF format/fenceStraight.glb', height: 1.2, keepScene: true },
   lightPost: { file: 'racing-kit/Models/GLTF format/lightPostModern.glb', height: 6.5, keepScene: true },
   gantry: { file: 'racing-kit/Models/GLTF format/overhead.glb', height: 8, keepScene: true },
   flag: { file: 'racing-kit/Models/GLTF format/flagCheckers.glb', height: 2.2, keepScene: true },
@@ -549,8 +551,12 @@ export function createAssetLibrary() {
           '#include <begin_vertex>',
           `#include <begin_vertex>
            #ifdef USE_INSTANCING
-             float sway = sin(uTime * 1.3 + instanceMatrix[3].x * 0.21 + instanceMatrix[3].z * 0.17);
-             transformed.x += sway * 0.07 * max(0.0, transformed.y);
+             // A slow, small sway. Anything more and the trees look like
+             // they are wobbling instead of standing in the wind.
+             float phase = instanceMatrix[3].x * 0.21 + instanceMatrix[3].z * 0.17;
+             float sway = sin(uTime * 0.9 + phase) * 0.6
+                        + sin(uTime * 1.7 + phase * 1.7) * 0.25;
+             transformed.x += sway * 0.018 * max(0.0, transformed.y);
            #endif`,
         );
       };

@@ -707,6 +707,12 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:' && (!isLocalDe
   globalThis.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   });
+  // A new build was deployed: reload so the player gets it.
+  navigator.serviceWorker?.addEventListener('message', (event) => {
+    if (event.data?.type === 'driftline:update') {
+      globalThis.location.reload();
+    }
+  });
 }
 
 // A tiny surface for automated tests.

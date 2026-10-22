@@ -67,7 +67,13 @@ self.addEventListener('activate', (event) => {
     caches
       .keys()
       .then((keys) => Promise.all(keys.filter((key) => key !== VERSION).map((key) => caches.delete(key))))
-      .then(() => self.clients.claim()),
+      .then(() => self.clients.claim())
+      // A new build is live: tell the open pages to reload, so nobody keeps
+      // playing the old one.
+      .then(() => self.clients.matchAll({ type: 'window' }))
+      .then((clients) => {
+        for (const client of clients) client.postMessage({ type: 'driftline:update' });
+      }),
   );
 });
 

@@ -58,6 +58,8 @@ uniform float vignette;
 uniform float saturation;
 uniform float contrast;
 uniform float speed;
+uniform vec2 sunPosition;
+uniform float sunVisible;
 uniform vec2 resolution;
 varying vec2 vUv;
 
@@ -100,6 +102,20 @@ void main() {
   // The vignette.
   float vig = smoothstep(0.95, 0.28, radius);
   color *= mix(1.0, vig, vignette);
+
+  // The sun: a glow and a few ghosts of it when it is in front of the camera.
+  if (sunVisible > 0.001) {
+    vec2 delta = (uv - sunPosition) * vec2(resolution.x / resolution.y, 1.0);
+    float d = length(delta);
+    float glow = exp(-d * 5.0) * 0.55 + exp(-d * 22.0) * 0.8;
+    color += vec3(1.0, 0.92, 0.75) * glow * sunVisible;
+    for (int i = 1; i <= 3; i++) {
+      float scale = 1.0 + float(i) * 0.55;
+      vec2 ghost = sunPosition + (sunPosition - uv) * scale;
+      float gd = length((uv - ghost) * vec2(resolution.x / resolution.y, 1.0));
+      color += vec3(0.6, 0.75, 1.0) * exp(-gd * 26.0) * 0.16 * sunVisible;
+    }
+  }
 
   // Linear to sRGB, because the target is a linear buffer.
   color = max(color, vec3(0.0));
@@ -179,6 +195,9 @@ export function createPost(options) {
       saturation: { value: state.saturation },
       contrast: { value: state.contrast },
       speed: { value: 0 },
+      sunPosition: { value: new THREE.Vector2(0.5, 0.9) },
+      sunVisible: { value: 0 },
+      sunDirection: { value: new THREE.Vector3(0.4, 0.7, -0.5) },
       resolution: { value: new THREE.Vector2(width, height) },
     },
     vertexShader: QUAD_VERTEX,
@@ -207,6 +226,21 @@ export function createPost(options) {
     renderer.setRenderTarget(sceneTarget);
     renderer.clear();
     renderer.render(sceneToRender, cameraToUse);
+
+    // Where is the sun on the screen? The camera matrices are up to date now.
+    const sun = compositeMaterial.uniforms.sunDirection.value;
+    const view = sun.clone().applyMatrix4(cameraToUse.matrixWorldInverse);
+    if (view.z < -0.05) {
+      const depth = -view.z;
+      const tanHalf = Math.tan(((cameraToUse.fov ?? 60) * Math.PI) / 360);
+      const ndcX = view.x / depth / (tanHalf * (cameraToUse.aspect ?? 1));
+      const ndcY = view.y / depth / tanHalf;
+      compositeMaterial.uniforms.sunPosition.value.set(ndcX * 0.5 + 0.5, ndcY * 0.5 + 0.5);
+      const inside = Math.abs(ndcX) < 1.35 && Math.abs(ndcY) < 1.35;
+      compositeMaterial.uniforms.sunVisible.value = inside ? 1 : 0;
+    } else {
+      compositeMaterial.uniforms.sunVisible.value = 0;
+    }
 
     // The bright pass.
     quad.material = brightMaterial;
@@ -239,6 +273,23 @@ export function createPost(options) {
      */
     setSpeed(value) {
       compositeMaterial.uniforms.speed.value = value;
+    },
+    /**
+     * Where the sun is on the screen, and how much of it is in view.
+     * @param {number} x 0..1
+     * @param {number} y 0..1
+     * @param {number} visible 0..1
+     */
+    setSun(x, y, visible) {
+      compositeMaterial.uniforms.sunPosition.value.set(x, y);
+      compositeMaterial.uniforms.sunVisible.value = visible;
+    },
+    /**
+     * The direction of the sun in world space.
+     * @param {THREE.Vector3} direction
+     */
+    setSunDirection(direction) {
+      compositeMaterial.uniforms.sunDirection.value.copy(direction);
     },
     /**
      * @param {number} w @param {number} h @param {number} ratio

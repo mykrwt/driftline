@@ -75,6 +75,18 @@ export function createTerrainManager(options) {
   /** @type {Map<number, { group: THREE.Group, mesh: THREE.Mesh }>} */
   const chunks = new Map();
   const colour = [0, 0, 0];
+  // The kinds of tree that grow here. A forest that is all one species looks
+  // like a plantation, so the kinds are mixed and the pines take over higher
+  // up the mountain.
+  const BROADLEAF = ['treeOak', 'tree', 'treeTall', 'treeFat', 'treeDetailed', 'treeSimple', 'treeCone'];
+  const CONIFER = ['treePine', 'treePineShort', 'treePineSlim', 'treePineWide'];
+  /** The colours of the wildflowers along the verge. */
+  const FLOWERS = [
+    [1.35, 1.2, 0.45],
+    [1.4, 0.85, 0.95],
+    [1.3, 1.3, 1.25],
+    [1.25, 0.95, 0.5],
+  ];
   const dummy = new THREE.Object3D();
   // The trees are baked into a texture when the assets are ready. A race can
   // start before they are, so the chunks are rebuilt once they are.
@@ -372,26 +384,39 @@ export function createTerrainManager(options) {
       }
 
       const kind = random();
+      // The higher up the mountain, the more conifers.
+      const conifer = altitude > 45 || random() < 0.35;
+      const kinds = conifer ? CONIFER : BROADLEAF;
+      const treeKey = kinds[Math.floor(random() * kinds.length)];
+
       if (distance < half + 36) {
-        if (kind < 0.44) {
-          placeTree(random() < 0.45 ? 'treeOak' : 'tree', x, y, z, random() * Math.PI * 2, 0.85 + random() * 0.45);
-        } else if (kind < 0.64) {
-          placeTree(random() < 0.6 ? 'treePine' : 'treePineShort', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.5);
-        } else if (kind < 0.78) {
-          place(random() < 0.5 ? 'bush' : 'bushSmall', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.7);
+        if (kind < 0.46) {
+          placeTree(treeKey, x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.5);
+        } else if (kind < 0.66) {
+          placeTree(
+            random() < 0.5 ? 'bushLarge' : 'bush',
+            x,
+            y,
+            z,
+            random() * Math.PI * 2,
+            0.8 + random() * 0.7,
+          );
+        } else if (kind < 0.8) {
+          placeTree('bushSmall', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.6);
         } else if (kind < 0.9) {
-          place('rockSmall', x, y, z, random() * Math.PI * 2, 0.7 + random() * 0.8);
+          place(random() < 0.5 ? 'rockSmall' : 'rockTall', x, y, z, random() * Math.PI * 2, 0.7 + random() * 0.8);
         } else {
-          place('grass', x, y, z, random() * Math.PI * 2, 0.9 + random() * 0.6);
+          // Tufts of grass along the verge.
+          placeTree('grass', x, y, z, random() * Math.PI * 2, 0.9 + random() * 0.8);
         }
       } else {
         // Up in the mountains the forest thins out into pines and boulders.
-        if (kind < 0.42) {
-          placeTree('treePine', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.6);
-        } else if (kind < 0.6) {
-          placeTree('treePineShort', x, y, z, random() * Math.PI * 2, 0.7 + random() * 0.5);
+        if (kind < 0.46) {
+          placeTree(treeKey, x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.6);
+        } else if (kind < 0.62) {
+          placeTree('treePineSlim', x, y, z, random() * Math.PI * 2, 0.7 + random() * 0.5);
         } else if (kind < 0.78) {
-          place('rock', x, y, z, random() * Math.PI * 2, 0.9 + random() * 1.1);
+          place(random() < 0.5 ? 'rock' : 'rockTall', x, y, z, random() * Math.PI * 2, 0.9 + random() * 1.1);
         } else if (kind < 0.9) {
           place('rockSmall', x, y, z, random() * Math.PI * 2, 0.8 + random() * 1.0);
         } else {
@@ -422,7 +447,7 @@ export function createTerrainManager(options) {
     }
 
     // The trees: one instanced mesh per kind, drawn with the baked texture.
-    for (const [, bucket] of trees) {
+    for (const [key, bucket] of trees) {
       const mesh = new THREE.InstancedMesh(
         bucket.impostor.geometry,
         bucket.impostor.material,
@@ -433,7 +458,17 @@ export function createTerrainManager(options) {
       if (mesh.instanceColor === null) {
         mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(bucket.matrices.length * 3), 3);
       }
+      const flowers = key === 'grass';
       for (let i = 0; i < bucket.matrices.length; i++) {
+        if (flowers) {
+          // Some of the tufts are wildflowers.
+          const roll = random();
+          if (roll > 0.62) {
+            const colour = FLOWERS[Math.floor(random() * FLOWERS.length)];
+            mesh.instanceColor.setXYZ(i, colour[0], colour[1], colour[2]);
+            continue;
+          }
+        }
         const tint = 0.8 + random() * 0.4;
         mesh.instanceColor.setXYZ(i, tint, tint * (0.97 + random() * 0.07), tint * (0.92 + random() * 0.12));
       }
@@ -466,7 +501,7 @@ export function createTerrainManager(options) {
      * @param {number} playerS
      */
     update(playerS) {
-      if (!treesReady && options.getImpostor?.('tree')) {
+      if (!treesReady && options.getImpostor?.('treeOak')) {
         treesReady = true;
         for (const index of Array.from(chunks.keys())) releaseChunk(index);
       }

@@ -169,6 +169,22 @@ export function createRenderer(canvas, options = {}) {
       post.setSpeed?.(value);
     },
     /**
+     * Where the sun is on the screen, for the lens flare.
+     * @param {number} x 0..1
+     * @param {number} y 0..1
+     * @param {number} visible 0..1
+     */
+    setSun(x, y, visible) {
+      post.setSun?.(x, y, visible);
+    },
+    /**
+     * The direction of the sun in world space.
+     * @param {any} direction
+     */
+    setSunDirection(direction) {
+      post.setSunDirection?.(direction);
+    },
+    /**
      * The tone mapping exposure, driven by the day and night palettes.
      * @param {number} value
      */

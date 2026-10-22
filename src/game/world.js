@@ -70,6 +70,13 @@ export function createWorld(options) {
   const effects = createEffects(scene.scene);
   const cameraState = createCamera();
   renderer.setExposure?.(scene.palette.exposure ?? 1);
+  // The sun direction, for the lens flare in the post processing.
+  const sunDirection = new THREE.Vector3(
+    scene.palette.sunX * 2 - 1,
+    scene.palette.sunY * 1.6 + 0.25,
+    -0.55,
+  ).normalize();
+  renderer.setSunDirection?.(sunDirection);
 
   // The camera starts behind the car, not at the world origin.
   updateCamera(cameraState, vehicle, 1 / 60, true);

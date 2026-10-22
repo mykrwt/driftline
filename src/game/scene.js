@@ -229,6 +229,11 @@ export function createWorldScene(profile, options) {
   // The trees are billboards: the model is baked into a texture once and
   // drawn with crossed quads afterwards. They are baked on demand, because a
   // race can start before the assets have finished loading.
+  const TREE_KEYS = [
+    'treeOak', 'tree', 'treeTall', 'treeFat', 'treeDetailed', 'treeSimple', 'treeCone',
+    'treePine', 'treePineShort', 'treePineSlim', 'treePineWide',
+    'bush', 'bushSmall', 'bushLarge', 'grass',
+  ];
   /** @type {Record<string, any>} */
   const impostors = {};
   const getImpostor = (key) => {

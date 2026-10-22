@@ -128,17 +128,18 @@ export function createSelfTest(driftline) {
       if (object.isInstancedMesh && object.material?.alphaTest > 0) {
         trees += object.count;
         if (object.material.map) treeTexture = true;
-        // Every prop has to stand on the ground.
+        // Every prop has to stand on the mesh, at the place it was put.
         const data = object.instanceMatrix.array;
         for (let i = 0; i < object.count; i++) {
           const x = data[i * 16 + 12];
           const y = data[i * 16 + 13];
           const z = data[i * 16 + 14];
-          const ground = world.groundAt(x, z);
+          const lateral = x - world.roadOffset(z);
+          const ground = world.scene.terrain.sampleHeight(z, lateral);
           const offset = Math.abs(y - ground);
           checked++;
           if (offset > worst) worst = offset;
-          if (offset > 2.5) floating++;
+          if (offset > 0.6) floating++;
         }
       }
     });
@@ -147,7 +148,7 @@ export function createSelfTest(driftline) {
     check(
       'the props stand on the ground',
       floating === 0,
-      `${floating} of ${checked} float, the worst by ${worst.toFixed(1)} m`,
+      `${floating} of ${checked} are off the mesh, the worst by ${worst.toFixed(2)} m`,
     );
 
     // --- the drift -----------------------------------------------------

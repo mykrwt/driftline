@@ -355,6 +355,14 @@ export function createWorld(options) {
       return groundAt(x, z);
     },
     /**
+     * The offset of the centre line at a distance along the road.
+     * @param {number} s
+     * @returns {number}
+     */
+    roadOffset(s) {
+      return roadOffset(profile, s);
+    },
+    /**
      * Hand the controls over to the driving bot.
      * @param {boolean} value
      */

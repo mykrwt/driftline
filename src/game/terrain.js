@@ -571,6 +571,15 @@ export function createTerrainManager(options) {
     get chunkCount() {
       return chunks.size;
     },
+    /**
+     * The height of the mesh at a point, the same way the props are placed.
+     * @param {number} s distance along the road
+     * @param {number} lateral offset from the centre line
+     * @returns {number}
+     */
+    sampleHeight(s, lateral) {
+      return ribbonHeight(s, lateral);
+    },
     dispose() {
       for (const index of Array.from(chunks.keys())) releaseChunk(index);
     },

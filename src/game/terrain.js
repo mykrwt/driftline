@@ -417,7 +417,7 @@ export function createTerrainManager(options) {
       const x = centre + side * distance;
       const z = s;
       // The props stand on the mesh, not on the real terrain.
-      const y = ribbonHeight(s, side * distance);
+      const y = ribbonHeight(s, side * (distance + half));
       const altitude = y - roadHeight(profile, s);
 
       // The slope decides whether anything can grow here.

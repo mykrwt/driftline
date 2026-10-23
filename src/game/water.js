@@ -1,70 +1,66 @@
 /**
- * Water.
+ * Alpine glacial lakes (`s`-streamed basin water planes).
  *
- * The valley floor is not always above the road: in the low parts the ground
- * dips below the water line and a lake appears. The surface is a ribbon that
- * follows the road, the same way the terrain does, and the parts that are
- * above the water are simply not drawn.
- *
- * The shader is cheap on purpose: two scrolling wave layers, a fresnel mix
- * between the deep colour and the sky, and a sun highlight.
+ * Uses true per-vertex metric water depth (`attribute float aDepth` from
+ * `terrain.js`) for organic sub-triangle shoreline clipping, crystal-clear
+ * turquoise shallows grading into deep sapphire-cobalt basins, multi-directional
+ * wind ripples, dark mountain reflection, sun/moon glitter, and lapping foam.
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
 
-/** How far below the road the water sits. */
-export const WATER_DROP = 9;
+export const WATER_DROP = 6.5;
 
 /**
- * @param {{ fog?: string, sky?: string, deep?: string, sun?: string, sunDirection?: THREE.Vector3 }} palette
+ * @param {{
+ *   fog: string,
+ *   sky: string,
+ *   deep?: string,
+ *   shallow?: string,
+ *   sun?: string,
+ *   sunDirection?: THREE.Vector3,
+ * }} palette
  */
 export function createWaterMaterial(palette) {
   const uniforms = {
     uTime: { value: 0 },
-    uDeep: { value: new THREE.Color(palette.deep ?? '#1d4f6b') },
-    uShallow: { value: new THREE.Color(palette.shallow ?? '#3f8fa8') },
-    uSky: { value: new THREE.Color(palette.sky ?? '#a9cdec') },
-    uSun: { value: new THREE.Color(palette.sun ?? '#fff3d2') },
-    uSunDirection: { value: palette.sunDirection ?? new THREE.Vector3(0.4, 0.6, -0.5).normalize() },
-    uFogColor: { value: new THREE.Color(palette.fog ?? '#b3d1ea') },
-    uFogNear: { value: 200 },
-    uFogFar: { value: 1000 },
+    uDeep: { value: new THREE.Color(palette.deep ?? '#06263d') },
+    uShallow: { value: new THREE.Color(palette.shallow ?? '#167a8a') },
+    uSky: { value: new THREE.Color(palette.sky) },
+    uSun: { value: new THREE.Color(palette.sun ?? '#fff4d8') },
+    uSunDirection: {
+      value: (palette.sunDirection ?? new THREE.Vector3(0.4, 0.45, -0.6)).clone().normalize(),
+    },
+    uFogColor: { value: new THREE.Color(palette.fog) },
+    uFogNear: { value: 300 },
+    uFogFar: { value: 1380 },
   };
 
   const material = new THREE.ShaderMaterial({
     uniforms,
     transparent: true,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    // The surface lies within a few centimetres of the land on the shallow
-    // shelf around a lake, and two coplanar surfaces fight for the depth
-    // buffer: the lake came out covered in fine stripes. Pulling the water
-    // towards the camera fixes that without moving the shoreline.
+    depthWrite: true,
     polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -4,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -2,
+    side: THREE.DoubleSide,
     vertexShader: `
       attribute float aDepth;
       varying float vDepth;
       varying vec3 vWorld;
-      varying vec3 vView;
-      uniform float uTime;
+      varying float vFogDepth;
+
       void main() {
         vDepth = aDepth;
-        vec3 pos = position;
-        // The waves are small, they only have to catch the light.
-        float wave = sin(pos.x * 0.35 + uTime * 1.1) * 0.05
-                   + sin(pos.z * 0.27 - uTime * 0.8) * 0.05
-                   + sin((pos.x + pos.z) * 0.11 + uTime * 0.5) * 0.04;
-        pos.y += wave * smoothstep(0.0, 1.5, aDepth);
-        vec4 world = modelMatrix * vec4(pos, 1.0);
+        vec4 world = modelMatrix * vec4(position, 1.0);
         vWorld = world.xyz;
-        vec4 view = viewMatrix * world;
-        vView = view.xyz;
-        gl_Position = projectionMatrix * view;
+        vec4 mv = viewMatrix * world;
+        vFogDepth = -mv.z;
+        gl_Position = projectionMatrix * mv;
       }
     `,
     fragmentShader: `
+      uniform float uTime;
       uniform vec3 uDeep;
       uniform vec3 uShallow;
       uniform vec3 uSky;
@@ -73,48 +69,92 @@ export function createWaterMaterial(palette) {
       uniform vec3 uFogColor;
       uniform float uFogNear;
       uniform float uFogFar;
-      uniform float uTime;
       varying float vDepth;
       varying vec3 vWorld;
-      varying vec3 vView;
+      varying float vFogDepth;
+
+      float whash(vec2 p) {
+        vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        return fract((p3.x + p3.y) * p3.z);
+      }
+
+      float wnoise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        float a = whash(i);
+        float b = whash(i + vec2(1.0, 0.0));
+        float c = whash(i + vec2(0.0, 1.0));
+        float d = whash(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+
+      float waveHeight(vec2 p, float t) {
+        float w = 0.0;
+        w += sin(dot(p, vec2(0.85, 0.42)) + t * 1.45) * 0.34;
+        w += sin(dot(p, vec2(-0.52, 0.96)) + t * 1.15) * 0.28;
+        w += (wnoise(p * 0.62 + vec2(t * 0.26, -t * 0.16)) - 0.5) * 0.72;
+        w += (wnoise(p * 1.35 - vec2(t * 0.36, t * 0.24)) - 0.5) * 0.45;
+        return w;
+      }
 
       void main() {
-        // The shore is faded out instead of cut away. A hard cut on a grid
-        // leaves a sawtooth edge around the lake, and the triangles at the
-        // waterline show up as stripes across the whole surface.
-        float shore = smoothstep(0.0, 2.6, vDepth);
-        if (shore <= 0.001) discard;
+        // Organic animated shoreline lapping right where lake depth meets the pebble bank!
+        float lap = 0.045 * sin(vWorld.z * 0.22 + uTime * 1.65) + 0.025 * sin(vWorld.x * 0.31 - uTime * 1.1);
+        float effDepth = vDepth + lap;
+        if (effDepth < 0.015) discard;
 
-        // The normal comes from two crossing wave trains. They are gentle on
-        // purpose: a sharper set of waves is a moire pattern at a distance,
-        // not water.
-        float dx = cos(vWorld.x * 0.14 + uTime * 0.7) * 0.035
-                 + cos((vWorld.x + vWorld.z) * 0.05 + uTime * 0.35) * 0.015;
-        float dz = cos(vWorld.z * 0.11 - uTime * 0.5) * 0.035
-                 + cos((vWorld.x + vWorld.z) * 0.05 + uTime * 0.35) * 0.015;
-        vec3 normal = normalize(vec3(-dx * 1.6, 1.0, -dz * 1.6));
+        vec2 p = vWorld.xz;
+        float distFade = 1.0 - smoothstep(95.0, 620.0, vFogDepth);
+        float eps = 0.28;
+        float h0 = waveHeight(p, uTime);
+        float hx = waveHeight(p + vec2(eps, 0.0), uTime);
+        float hz = waveHeight(p + vec2(0.0, eps), uTime);
 
-        vec3 viewDir = normalize(-vView);
-        float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
+        vec3 normal = normalize(vec3(
+          -(hx - h0) / eps * 0.36 * distFade,
+          1.0,
+          -(hz - h0) / eps * 0.36 * distFade
+        ));
 
-        // The colour: shallow near the shore, deep in the middle.
-        vec3 color = mix(uShallow, uDeep, smoothstep(0.0, 4.0, vDepth));
-        color = mix(color, uSky, clamp(fresnel * 0.75, 0.0, 0.6));
+        vec3 viewDir = normalize(cameraPosition - vWorld);
+        float grazing = 1.0 - clamp(viewDir.y, 0.0, 1.0);
 
-        // The sun on the water.
-        vec3 halfDir = normalize(viewDir + uSunDirection);
-        float spec = pow(max(dot(normal, halfDir), 0.0), 60.0);
-        color += uSun * spec * 0.9;
+        // True metric optical absorption: turquoise glacier shallows -> deep cobalt basin!
+        float depthNorm = smoothstep(0.18, 4.8, effDepth);
+        vec3 base = mix(uShallow, uDeep, depthNorm);
 
-        float alpha = mix(0.5, 0.92, smoothstep(0.0, 2.5, vDepth));
-        alpha = max(alpha, fresnel * 0.9);
-        alpha *= shore;
+        // Silky subtle wind ripples around the optical depth colour (zero egg-carton speckle!).
+        float crest = smoothstep(-0.45, 0.45, h0) * distFade;
+        float chopStrength = mix(0.035, 0.12, pow(grazing, 1.5));
+        base *= mix(1.0 - chopStrength, 1.0 + chopStrength, crest);
 
-        // The fog, so the far end of the lake melts into the horizon.
-        float distance = length(vView);
-        float fog = smoothstep(uFogNear, uFogFar, distance);
-        color = mix(color, uFogColor, fog);
+        // Smooth dark alpine mountain reflection band across deep water.
+        float mtnBand = smoothstep(3.6, 6.6, effDepth + wnoise(vec2(vWorld.z * 0.014, 2.7)) * 1.4);
+        base = mix(base, uDeep * 0.56 + uSky * 0.03, mtnBand * 0.40);
 
+        // Pure physical Fresnel reflection from perturbed surface normal!
+        float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 4.2);
+        float waveSky = clamp(fresnel * 0.34, 0.02, 0.26);
+        vec3 color = mix(base, uSky * 0.58, waveSky);
+
+        // True normal-driven sun / moon specular glitter along the reflection path!
+        vec3 sunDir = normalize(uSunDirection);
+        vec3 halfVec = normalize(sunDir + viewDir);
+        float specTight = pow(max(dot(normal, halfVec), 0.0), 160.0);
+        float specBroad = pow(max(dot(normal, halfVec), 0.0), 18.0);
+        float skyLum = clamp(dot(uSky, vec3(0.299, 0.587, 0.114)) * 1.4, 0.16, 1.0);
+        color += uSun * (specTight * 2.0 * distFade + specBroad * 0.16 * skyLum);
+
+        // Delicate white shoreline surf foam ONLY in the shallowest 0.02..0.34m rim!
+        float foam = (1.0 - smoothstep(0.02, 0.34, effDepth)) * (0.35 + 0.35 * skyLum);
+        color = mix(color, mix(vec3(0.76, 0.86, 0.92) * skyLum, uSun * 0.85, 0.25), foam);
+
+        float fogFactor = smoothstep(uFogNear, uFogFar, vFogDepth);
+        color = mix(color, uFogColor, fogFactor);
+
+        float alpha = mix(0.45, 0.985, smoothstep(0.02, 0.85, effDepth));
         gl_FragColor = vec4(color, alpha);
       }
     `,
@@ -123,11 +163,9 @@ export function createWaterMaterial(palette) {
   return {
     material,
     uniforms,
-    /**
-     * @param {number} time
-     */
-    update(time) {
-      uniforms.uTime.value = time;
+    /** @param {number} elapsed */
+    update(elapsed) {
+      uniforms.uTime.value = elapsed;
     },
     dispose() {
       material.dispose();

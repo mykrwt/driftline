@@ -1,95 +1,142 @@
 /**
  * The palette of the world.
  *
- * The colours live here, away from the renderer, so the terrain map preview
- * tool can use exactly the same rules as the game.
+ * Drives sky, atmosphere, directional & hemisphere light, lakes, distant
+ * mountain haze, tree foliage mood, and base ground colours across all presets.
  */
 
-/**
- * The palettes the world can be lit with.
- *
- * They drive the sky, the fog and the lights, so a preset changes the whole
- * mood of the drive in one go.
- */
 export const PALETTES = {
   alpine: {
+    id: 'alpine',
     label: 'Alpine Day',
-    skyTop: '#1b46ae',
-    skyHorizon: '#a9cdec',
-    skyGround: '#7f95a8',
-    sun: '#fff3d2',
-    sunGlow: 'rgba(255, 233, 176, 0.85)',
-    fog: '#b3d1ea',
-    fogStart: 260,
-    fogEnd: 1050,
-    sunX: 0.72,
-    sunY: 0.3,
-    sunIntensity: 1.6,
-    hemiIntensity: 1.75,
-    fillIntensity: 0.55,
-    ambient: '#8598ad',
+    skyTop: '#062b88',
+    skyHorizon: '#9acef2',
+    skyGround: '#637d96',
+    sun: '#fff4d8',
+    sunGlow: 'rgba(255, 236, 184, 0.88)',
+    fog: '#aad2f0',
+    fogStart: 320,
+    fogEnd: 1380,
+    waterDeep: '#06263d',
+    waterShallow: '#167a8a',
+    horizonNear: '#6387b0',
+    horizonFar: '#8cb0d4',
+    horizonSnow: '#f2f8ff',
+    foliageTint: '#ffffff',
+    foliageEmissive: 0.56,
+    headlights: 0,
+    sunX: 0.74,
+    sunY: 0.36,
+    sunIntensity: 1.95,
+    hemiIntensity: 1.5,
+    fillIntensity: 0.5,
+    ambient: '#758ba6',
     starAlpha: 0,
-    exposure: 0.88,
-    cloud: 0.7,
+    exposure: 0.93,
+    cloud: 0.62,
   },
   golden: {
+    id: 'golden',
     label: 'Golden Hour',
-    skyTop: '#22407f',
-    skyHorizon: '#eec089',
-    skyGround: '#7a6759',
-    sun: '#ffcf8c',
-    sunGlow: 'rgba(255, 190, 120, 0.9)',
-    fog: '#dcb489',
-    fogStart: 220,
-    fogEnd: 950,
-    sunX: 0.84,
-    sunY: 0.12,
-    sunIntensity: 2.5,
-    hemiIntensity: 1.45,
-    fillIntensity: 0.5,
-    ambient: '#8a6f78',
-    starAlpha: 0,
-    exposure: 0.95,
-    cloud: 0.75,
+    skyTop: '#142260',
+    skyHorizon: '#f2a15a',
+    skyGround: '#6c5046',
+    sun: '#ffaf5c',
+    sunGlow: 'rgba(255, 178, 102, 0.94)',
+    fog: '#e4a76e',
+    fogStart: 260,
+    fogEnd: 1180,
+    waterDeep: '#10243d',
+    waterShallow: '#285d6c',
+    horizonNear: '#745e78',
+    horizonFar: '#ad827b',
+    horizonSnow: '#ffd9b0',
+    foliageTint: '#ffd6a6',
+    foliageEmissive: 0.42,
+    headlights: 0.45,
+    sunX: 0.86,
+    sunY: 0.11,
+    sunIntensity: 2.75,
+    hemiIntensity: 1.18,
+    fillIntensity: 0.44,
+    ambient: '#7a5a70',
+    starAlpha: 0.1,
+    exposure: 0.96,
+    cloud: 0.64,
   },
   midnight: {
+    id: 'midnight',
     label: 'Midnight',
-    skyTop: '#04060d',
-    skyHorizon: '#101b33',
-    skyGround: '#080c15',
-    sun: '#cddcff',
-    sunGlow: 'rgba(150, 180, 255, 0.35)',
-    fog: '#0b1220',
-    fogStart: 90,
-    fogEnd: 560,
-    sunX: 0.3,
-    sunY: 0.45,
-    sunIntensity: 0.75,
-    hemiIntensity: 0.55,
-    fillIntensity: 0.22,
-    ambient: '#243356',
+    skyTop: '#01030b',
+    skyHorizon: '#0a1834',
+    skyGround: '#040812',
+    sun: '#9ebfff',
+    sunGlow: 'rgba(155, 190, 255, 0.42)',
+    fog: '#09152b',
+    fogStart: 150,
+    fogEnd: 880,
+    waterDeep: '#061a36',
+    waterShallow: '#144468',
+    horizonNear: '#0c1c3a',
+    horizonFar: '#13284e',
+    horizonSnow: '#5a7ba8',
+    foliageTint: '#3f577d',
+    foliageEmissive: 0.13,
+    headlights: 1.0,
+    sunX: 0.28,
+    sunY: 0.46,
+    sunIntensity: 0.9,
+    hemiIntensity: 0.58,
+    fillIntensity: 0.24,
+    ambient: '#192a4c',
     starAlpha: 1,
-    exposure: 1.2,
-    cloud: 0.25,
+    exposure: 1.12,
+    cloud: 0.24,
   },
 };
 
-/** The colours the ground is painted with. */
-export const GROUND = {
-  grass: '#5e8a45',
-  grassLight: '#77a055',
-  grassDark: '#436b3a',
-  scrub: '#96884c',
-  dirt: '#7d6749',
-  rock: '#6f737c',
-  rockDark: '#4f535c',
-  scree: '#8d8c85',
-  snow: '#e8eef8',
-  gravel: '#8c8577',
+/** Friendly aliases so callers/tests can pass either preset names or objects. */
+export const PALETTE_ALIASES = {
+  day: 'alpine',
+  alpine: 'alpine',
+  sunset: 'golden',
+  dusk: 'golden',
+  golden: 'golden',
+  night: 'midnight',
+  midnight: 'midnight',
 };
 
 /**
- * Parse a hex colour into linear-ish 0..1 components.
+ * Resolve a palette preset name or partial object.
+ * @param {any} input
+ */
+export function resolvePalette(input) {
+  if (typeof input === 'string') {
+    const key = PALETTE_ALIASES[input.toLowerCase()] ?? 'alpine';
+    return { ...PALETTES[key] };
+  }
+  if (input && typeof input === 'object') {
+    return input;
+  }
+  return { ...PALETTES.alpine };
+}
+
+/** Natural alpine ground palette (richer greens, warm soil, crisp slate & snow). */
+export const GROUND = {
+  grass: '#4c7f38',
+  grassLight: '#6fa149',
+  grassDark: '#31592a',
+  scrub: '#8f8446',
+  dirt: '#755f43',
+  rock: '#6c727d',
+  rockDark: '#474c56',
+  scree: '#98968e',
+  snow: '#eaf1fb',
+  gravel: '#857f72',
+};
+
+/**
+ * Parse a hex colour into 0..1 components.
  * @param {string} hex
  * @returns {[number, number, number]}
  */
@@ -99,8 +146,8 @@ export function hexToRgb(hex) {
 }
 
 /**
- * @param {number} a
- * @param {number} b
+ * @param {number[]} a
+ * @param {number[]} b
  * @param {number} t
  * @param {number[]} out
  */
@@ -110,8 +157,21 @@ export function mixInto(a, b, t, out) {
   out[2] += (b[2] - a[2]) * t;
 }
 
+const RGB_CACHE = {
+  grass: hexToRgb(GROUND.grass),
+  grassLight: hexToRgb(GROUND.grassLight),
+  grassDark: hexToRgb(GROUND.grassDark),
+  scrub: hexToRgb(GROUND.scrub),
+  dirt: hexToRgb(GROUND.dirt),
+  gravel: hexToRgb(GROUND.gravel),
+  rock: hexToRgb(GROUND.rock),
+  rockDark: hexToRgb(GROUND.rockDark),
+  scree: hexToRgb(GROUND.scree),
+  snow: hexToRgb(GROUND.snow),
+};
+
 /**
- * The colour of the ground at a point.
+ * The base vertex colour of the ground at a point (also shared by tools/scene-preview.mjs).
  *
  * @param {number} slope 0 = flat, 1 = a cliff
  * @param {number} altitude metres above the road
@@ -119,79 +179,60 @@ export function mixInto(a, b, t, out) {
  * @param {number} patch noise in 0..1
  * @param {number} [rockPatch] noise in 0..1, where the rock breaks through
  * @param {number[]} out rgb in 0..1
- * @param {number} [mottle] 0..1 fine noise, so a rock face is not one flat grey
+ * @param {number} [mottle] 0..1 fine noise
  */
 export function groundColour(slope, altitude, dist, patch, rockPatch, out, mottle = 0.5) {
-  if (rockPatch === undefined) {
-    rockPatch = 0;
-  }
-  const grass = hexToRgb(GROUND.grass);
-  const grassLight = hexToRgb(GROUND.grassLight);
-  const grassDark = hexToRgb(GROUND.grassDark);
-  const scrub = hexToRgb(GROUND.scrub);
-  const dirt = hexToRgb(GROUND.dirt);
-  const gravel = hexToRgb(GROUND.gravel);
-  const rock = hexToRgb(GROUND.rock);
-  const rockDark = hexToRgb(GROUND.rockDark);
-  const scree = hexToRgb(GROUND.scree);
-  const snow = hexToRgb(GROUND.snow);
+  if (rockPatch === undefined) rockPatch = 0;
+
+  const { grass, grassLight, grassDark, scrub, dirt, gravel, rock, rockDark, scree, snow } = RGB_CACHE;
 
   out[0] = grass[0];
   out[1] = grass[1];
   out[2] = grass[2];
-  mixInto(out, grassLight, patch * 0.95, out);
-  mixInto(out, grassDark, (1 - patch) * 0.45, out);
+  mixInto(out, grassLight, patch * 0.9, out);
+  mixInto(out, grassDark, (1 - patch) * 0.5, out);
 
-  // Dry scrub on the sunny shelves.
-  const scrubAmount = Math.max(0, Math.min(1, (patch - 0.6) * 3.2));
-  mixInto(out, scrub, scrubAmount * 0.6, out);
+  // Sun-warmed alpine pasture shelves.
+  const scrubAmount = Math.max(0, Math.min(1, (patch - 0.58) * 3.0)) * Math.min(1, Math.max(0, altitude + 8) / 45);
+  mixInto(out, scrub, scrubAmount * 0.52, out);
 
-  // Bare earth along the verge.
-  const verge = Math.max(0, Math.min(1, (16 - dist) / 12));
-  mixInto(out, dirt, verge * 0.5 * (1 - slope), out);
+  // Subtle earth transition along roadside cuts/swales.
+  const verge = Math.max(0, Math.min(1, (9.5 - dist) / 8.5));
+  mixInto(out, dirt, verge * 0.34 * (1 - slope * 0.5), out);
 
-  // A gravel shoulder right at the edge of the tarmac.
-  const shoulder = Math.max(0, Math.min(1, (2.6 - dist) / 2.2));
-  mixInto(out, gravel, shoulder * 0.8 * (1 - slope * 0.5), out);
+  // Gravel shoulder right beside the tarmac.
+  const shoulder = Math.max(0, Math.min(1, (2.6 - dist) / 2.3));
+  mixInto(out, gravel, shoulder * 0.82 * (1 - slope * 0.4), out);
 
-  // Rock on the steep ground. The turf gives up sooner than it used to, so a
-  // cliff face is rock instead of a grey-green sheet.
-  const rockAmount = Math.max(0, Math.min(1, (slope - 0.22) * 2.8));
+  // Exposed bedrock on steep slopes & high crags.
+  const rockAmount = Math.max(0, Math.min(1, (slope - 0.2) * 2.9));
   mixInto(out, rock, rockAmount, out);
-  mixInto(out, rockDark, Math.max(0, Math.min(1, (slope - 0.5) * 2.4)), out);
+  mixInto(out, rockDark, Math.max(0, Math.min(1, (slope - 0.48) * 2.4)), out);
 
-  // Outcrops: the mountain breaks through the turf in patches, which is what
-  // makes a slope read as rock instead of as a green ramp.
-  const outcrop = Math.max(0, Math.min(1, (rockPatch - 0.42) * 3.2)) * Math.min(1, altitude / 18);
-  mixInto(out, rock, outcrop * 0.95, out);
-  // Horizontal strata break the cliffs up into layers of rock. The bands are
-  // stretched vertically and driven by the patch noise as well, so they read
-  // as geology rather than as a sine wave.
-  const strata = 0.5 + 0.5 * Math.sin(altitude * 0.16 + rockPatch * 9.5);
-  const grit = 0.5 + 0.5 * Math.sin(altitude * 0.9 + rockPatch * 23);
-  mixInto(out, rockDark, outcrop * 0.62 * strata, out);
-  mixInto(out, rockDark, rockAmount * 0.3 * (1 - strata) * grit, out);
-  mixInto(out, scree, outcrop * 0.3 * (1 - strata), out);
-  mixInto(out, rock, rockAmount * 0.25 * grit, out);
+  const outcrop = Math.max(0, Math.min(1, (rockPatch - 0.4) * 3.1)) * Math.min(1, Math.max(0, altitude) / 16);
+  mixInto(out, rock, outcrop * 0.92, out);
 
-  // Speckle. A mountainside is never one colour: it is a mosaic of bare rock,
-  // dark rock in the cracks and pale scree, a few metres across, and the fine
-  // noise is what puts that mosaic on the face instead of a flat wash.
+  const strata = 0.5 + 0.5 * Math.sin(altitude * 0.17 + rockPatch * 9.5);
+  const grit = 0.5 + 0.5 * Math.sin(altitude * 0.85 + rockPatch * 21);
+  mixInto(out, rockDark, outcrop * 0.58 * strata, out);
+  mixInto(out, rockDark, rockAmount * 0.28 * (1 - strata) * grit, out);
+  mixInto(out, scree, outcrop * 0.28 * (1 - strata), out);
+  mixInto(out, rock, rockAmount * 0.22 * grit, out);
+
   const speckle = Math.max(0, mottle - 0.35) * 1.5;
-  mixInto(out, rockDark, Math.min(0.75, speckle) * Math.max(rockAmount, outcrop) * 0.85, out);
-  mixInto(out, scree, Math.max(0, mottle - 0.66) * 1.9 * Math.max(rockAmount, outcrop) * 0.8, out);
-  mixInto(out, grassDark, Math.max(0, 0.35 - mottle) * 1.4 * (1 - rockAmount) * (1 - outcrop) * 0.7, out);
+  mixInto(out, rockDark, Math.min(0.72, speckle) * Math.max(rockAmount, outcrop) * 0.8, out);
+  mixInto(out, scree, Math.max(0, mottle - 0.64) * 1.85 * Math.max(rockAmount, outcrop) * 0.78, out);
+  mixInto(out, grassDark, Math.max(0, 0.36 - mottle) * 1.35 * (1 - rockAmount) * (1 - outcrop) * 0.68, out);
 
-  const screeAmount = Math.max(0, Math.min(1, (altitude - 90) / 140)) * (1 - rockAmount * 0.4);
-  mixInto(out, scree, screeAmount * 0.45, out);
+  // High alpine talus & snowline.
+  const screeAmount = Math.max(0, Math.min(1, (altitude - 82) / 115)) * (1 - rockAmount * 0.35);
+  mixInto(out, scree, screeAmount * 0.5, out);
 
-  // Snow on the high, gentle ground.
-  const snowAmount =
-    Math.max(0, Math.min(1, (altitude - 215) / 130)) * (1 - Math.min(1, slope * 1.6));
-  mixInto(out, snow, snowAmount, out);
+  const snowAmount = Math.max(0, Math.min(1, (altitude - 155) / 95)) * (1 - Math.min(1, slope * 1.45));
+  mixInto(out, snow, snowAmount * 0.95, out);
 
-  // Valleys collect more moisture, so they read greener.
-  const damp = Math.max(0, Math.min(1, (-altitude - 6) / 40));
-  mixInto(out, grassDark, damp * 0.4, out);
+  // Moist lake shores & valley floor meadows.
+  const damp = Math.max(0, Math.min(1, (-altitude - 3.5) / 8));
+  mixInto(out, dirt, damp * 0.45, out);
   return out;
 }

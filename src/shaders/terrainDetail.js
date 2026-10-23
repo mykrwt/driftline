@@ -49,6 +49,12 @@ export function applyTerrainDetail(material, options = {}) {
   const frequency = options.frequency ?? 0.035;
   const octaves = options.octaves ?? 3;
 
+  if (material?.userData?.terrainUniforms?.uDetailAmp) {
+    const existing = material.userData.terrainUniforms.uDetailAmp;
+    existing.value = amplitude;
+    return { uniform: existing };
+  }
+
   const uniform = { value: amplitude };
   material.userData.detail = uniform;
   material.onBeforeCompile = (shader) => {

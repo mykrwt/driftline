@@ -321,33 +321,93 @@ export function createGroundNormalMap(size = 256, scale = 2.4) {
 }
 
 /**
- * Asphalt texture with lane markings (tiles seamlessly along the road).
- * @param {{ road: string, lane: string, rumbleA: string, rumbleB: string }} palette
- * @param {HTMLImageElement | null} [baseImage] an optional photographic asphalt base
+ * Procedural alpine roadside delineator post (white shaft + black collar + retro-reflector).
+ * Guides the eye around mountain bends day & night with 1 instanced draw call per chunk.
+ */
+export function createDelineatorAsset() {
+  const shaft = new THREE.BoxGeometry(0.11, 0.96, 0.06);
+  shaft.translate(0, 0.48, 0);
+  const cap = new THREE.BoxGeometry(0.125, 0.16, 0.07);
+  cap.translate(0, 0.86, 0);
+  const refl = new THREE.BoxGeometry(0.085, 0.12, 0.078);
+  refl.translate(0, 0.86, 0);
+
+  const paintWhite = (geo, r, g, b) => {
+    const g2 = geo.index ? geo.toNonIndexed() : geo;
+    const count = g2.getAttribute('position').count;
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      colors[i * 3] = r;
+      colors[i * 3 + 1] = g;
+      colors[i * 3 + 2] = b;
+    }
+    g2.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return g2;
+  };
+
+  const parts = [
+    paintWhite(shaft, 0.92, 0.94, 0.97),
+    paintWhite(cap, 0.14, 0.16, 0.2),
+    paintWhite(refl, 1.0, 0.42, 0.18),
+  ];
+
+  const positions = [];
+  const normals = [];
+  const colors = [];
+  for (const p of parts) {
+    const pos = p.getAttribute('position');
+    const nor = p.getAttribute('normal');
+    const col = p.getAttribute('color');
+    for (let i = 0; i < pos.count; i++) {
+      positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+      normals.push(nor.getX(i), nor.getY(i), nor.getZ(i));
+      colors.push(col.getX(i), col.getY(i), col.getZ(i));
+    }
+    p.dispose();
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeBoundingSphere();
+
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    roughness: 0.42,
+    metalness: 0.05,
+    emissive: new THREE.Color('#22140c'),
+    emissiveIntensity: 0.45,
+  });
+  return { groups: [{ geometry, material }] };
+}
+
+/**
+ * Asphalt texture with realistic aggregate grain, wheel-track polish, shoulder
+ * transition, and crisp mountain highway markings.
+ * @param {any} palette
+ * @param {HTMLImageElement | null} [baseImage]
  * @returns {THREE.CanvasTexture}
  */
 export function createRoadTexture(palette, baseImage = null) {
-  const size = 256;
+  const size = 512;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
 
-  if (baseImage) {
-    // Photographic asphalt. It is lifted and cooled a little, because the
-    // photo is almost black and the tarmac has to read as grey.
+  if (baseImage && baseImage.width > 0) {
     ctx.drawImage(baseImage, 0, 0, size, size);
-    ctx.fillStyle = 'rgba(206, 212, 222, 0.45)';
+    // Tint into rich cool alpine slate asphalt instead of chalky pale grey.
+    ctx.fillStyle = 'rgba(116, 124, 138, 0.34)';
     ctx.fillRect(0, 0, size, size);
   } else {
-    ctx.fillStyle = palette.road;
+    ctx.fillStyle = palette?.road || '#3f4552';
     ctx.fillRect(0, 0, size, size);
-
-    // asphalt speckle
     const image = ctx.getImageData(0, 0, size, size);
     const data = image.data;
     for (let i = 0; i < data.length; i += 4) {
-      const n = (Math.random() - 0.5) * 14;
+      const n = (Math.random() - 0.5) * 18;
       data[i] = Math.max(0, Math.min(255, data[i] + n));
       data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + n));
       data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + n));
@@ -355,25 +415,47 @@ export function createRoadTexture(palette, baseImage = null) {
     ctx.putImageData(image, 0, 0);
   }
 
-  // edge lines (u = 0 and u = 1 are the road edges)
-  ctx.fillStyle = '#eef2ff';
-  ctx.globalAlpha = 0.92;
-  ctx.fillRect(7, 0, 10, size);
-  ctx.fillRect(size - 17, 0, 10, size);
-  ctx.globalAlpha = 1;
+  // Subtle polished tyre wear tracks down both lanes + darker centre/edge bitumen.
+  for (const trackCenter of [0.27, 0.73]) {
+    const gx = ctx.createLinearGradient(size * (trackCenter - 0.13), 0, size * (trackCenter + 0.13), 0);
+    gx.addColorStop(0, 'rgba(255, 255, 255, 0)');
+    gx.addColorStop(0.5, 'rgba(218, 226, 240, 0.10)');
+    gx.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = gx;
+    ctx.fillRect(size * (trackCenter - 0.13), 0, size * 0.26, size);
+  }
 
-  // centre dashes
-  ctx.fillStyle = '#eef2ff';
-  ctx.globalAlpha = 0.8;
+  // Subtle dusty gravel lip outside the white edge lines so tarmac melts into the shoulder.
+  const leftEdge = ctx.createLinearGradient(0, 0, 26, 0);
+  leftEdge.addColorStop(0, 'rgba(134, 128, 114, 0.78)');
+  leftEdge.addColorStop(1, 'rgba(134, 128, 114, 0)');
+  ctx.fillStyle = leftEdge;
+  ctx.fillRect(0, 0, 26, size);
+
+  const rightEdge = ctx.createLinearGradient(size - 26, 0, size, 0);
+  rightEdge.addColorStop(0, 'rgba(134, 128, 114, 0)');
+  rightEdge.addColorStop(1, 'rgba(134, 128, 114, 0.78)');
+  ctx.fillStyle = rightEdge;
+  ctx.fillRect(size - 26, 0, 26, size);
+
+  // Crisp alpine edge lines (u = 0.042 and u = 0.958).
+  ctx.fillStyle = '#f2f5ff';
+  ctx.globalAlpha = 0.93;
+  ctx.fillRect(20, 0, 12, size);
+  ctx.fillRect(size - 32, 0, 12, size);
+
+  // Clean dashed centre line.
+  ctx.fillStyle = '#f5f7ff';
+  ctx.globalAlpha = 0.85;
   for (let i = 0; i < 2; i++) {
-    ctx.fillRect(size / 2 - 5, i * (size / 2) + size * 0.12, 10, size / 7);
+    ctx.fillRect(size / 2 - 6, i * (size / 2) + Math.round(size * 0.11), 12, Math.round(size * 0.19));
   }
   ctx.globalAlpha = 1;
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.anisotropy = 4;
+  texture.anisotropy = 8;
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }

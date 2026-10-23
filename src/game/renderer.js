@@ -40,7 +40,7 @@ export function createRenderer(canvas, options = {}) {
   // cost a second pass over the geometry, so they are tied to the quality
   // preset.
   renderer.shadowMap.enabled = quality !== 'low';
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const camera = new THREE.PerspectiveCamera(62, 1, 0.25, 5000);
   camera.position.set(0, 3, 0);

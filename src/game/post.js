@@ -226,6 +226,8 @@ export function createPost(options) {
     renderer.setRenderTarget(sceneTarget);
     renderer.clear();
     renderer.render(sceneToRender, cameraToUse);
+    const sceneCalls = renderer.info.render.calls;
+    const sceneTriangles = renderer.info.render.triangles;
 
     // Where is the sun on the screen? The camera matrices are up to date now.
     const sun = compositeMaterial.uniforms.sunDirection.value;
@@ -263,6 +265,8 @@ export function createPost(options) {
     quad.material = compositeMaterial;
     renderer.setRenderTarget(null);
     renderer.render(scene, camera);
+    renderer.info.render.calls = sceneCalls;
+    renderer.info.render.triangles = sceneTriangles;
   }
 
   return {

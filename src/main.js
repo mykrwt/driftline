@@ -140,13 +140,16 @@ const menus = createMenus({
   },
   onSettingsChange: (next) => {
     const paletteChanged = next.palette !== appliedPalette;
+    const carChanged = next.car !== settings.car;
     Object.assign(settings, next);
     saveState({ settings, records });
     applySettings();
-    // The time of day can be changed while driving.
     if (paletteChanged) {
       appliedPalette = next.palette;
       world?.setPalette(PALETTES[settings.palette] ?? PALETTES.alpine);
+    }
+    if (carChanged && phase === 'menu') {
+      bootMenuBackdrop();
     }
   },
   onCopy: (text) => {
@@ -422,15 +425,34 @@ function resumeRace() {
   loop.start();
 }
 
+function bootMenuBackdrop() {
+  if (phase !== 'menu') return;
+  disposeWorld();
+  world = createWorld({
+    canvas,
+    input,
+    audio: null,
+    assets,
+    renderer,
+    seed: worldSeed,
+    carId: settings.car,
+    palette: PALETTES[settings.palette] ?? PALETTES.alpine,
+    quality: { quality: settings.quality, autoQuality: settings.autoQuality },
+  });
+  world.setAutopilot(true);
+  appliedPalette = settings.palette;
+  loop.start();
+}
+
 function quitToMenu() {
   loop.stop();
   phase = 'menu';
   input.setEnabled(false);
   hud.hide();
-  disposeWorld();
   session?.leave();
   session = null;
   menus.show('title');
+  bootMenuBackdrop();
 }
 
 // --------------------------------------------------------------- multiplayer
@@ -551,7 +573,17 @@ const loop = createLoop({
   step: 1 / 60,
   maxSteps: 5,
   update(dt) {
-    if (phase !== 'racing' || !world) return;
+    if (!world || phase === 'paused') return;
+    if (phase === 'menu') {
+      try {
+        world.update(dt * 0.65);
+      } catch (err) {
+        globalThis.__driftlineError = String((err && /** @type {any} */ (err).stack) || err);
+        console.error('[driftline] menu backdrop update failed', err);
+        loop.stop();
+      }
+      return;
+    }
     try {
       input.update(dt);
       world.update(dt);
@@ -570,6 +602,7 @@ const loop = createLoop({
       globalThis.__driftlineError = String((err && /** @type {any} */ (err).stack) || err);
       console.error('[driftline] render failed', err);
     }
+    if (phase !== 'racing') return;
     const now = performance.now();
     if (now - lastHudUpdate > 60) {
       lastHudUpdate = now;
@@ -697,11 +730,17 @@ assets
     if (loadingBar) loadingBar.style.width = `${Math.round((loaded / total) * 100)}%`;
     if (loadingLabel) loadingLabel.textContent = `Loading world ${loaded}/${total}`;
   })
-  .then(() => finishLoading())
+  .then(() => {
+    finishLoading();
+    bootMenuBackdrop();
+  })
   .catch((err) => {
     console.error('[driftline] asset load failed', err);
     if (loadingLabel) loadingLabel.textContent = 'Some assets failed to load - using fallback shapes';
-    setTimeout(finishLoading, 1200);
+    setTimeout(() => {
+      finishLoading();
+      bootMenuBackdrop();
+    }, 1200);
   });
 setTimeout(finishLoading, 12000);
 

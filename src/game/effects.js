@@ -41,6 +41,7 @@ export function createEffects(scene) {
     depthWrite: false,
     uniforms: {
       map: { value: smokeTexture },
+      uLightTint: { value: new THREE.Color(0xffffff) },
     },
     vertexShader: `
       attribute float aSize;
@@ -52,19 +53,22 @@ export function createEffects(scene) {
         vAlpha = aAlpha;
         vColor = aColor;
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = min(180.0, aSize * (420.0 / max(0.1, -mv.z)));
+        gl_PointSize = min(115.0, aSize * (340.0 / max(0.1, -mv.z)));
         gl_Position = projectionMatrix * mv;
       }
     `,
     fragmentShader: `
       uniform sampler2D map;
+      uniform vec3 uLightTint;
       varying float vAlpha;
       varying vec3 vColor;
       void main() {
-        vec4 tex = texture2D(map, gl_PointCoord);
-        float alpha = tex.a * vAlpha;
-        if (alpha < 0.01) discard;
-        gl_FragColor = vec4(vColor * tex.rgb, alpha);
+        vec2 uv = gl_PointCoord;
+        vec4 tex = texture2D(map, uv);
+        float radial = 1.0 - smoothstep(0.12, 0.5, length(uv - 0.5));
+        float alpha = tex.a * radial * vAlpha;
+        if (alpha < 0.006) discard;
+        gl_FragColor = vec4(vColor * uLightTint * tex.rgb, alpha);
       }
     `,
   });
@@ -195,8 +199,8 @@ export function createEffects(scene) {
       positions[o] = p.x;
       positions[o + 1] = p.y;
       positions[o + 2] = p.z;
-      sizes[i] = p.size * (0.7 + t * 2.1);
-      alphas[i] = Math.max(0, (1 - t) * 0.55);
+      sizes[i] = p.size * (0.55 + t * 1.65);
+      alphas[i] = Math.max(0, Math.pow(1 - t, 1.75) * 0.28);
       colors[o] = p.tint[0];
       colors[o + 1] = p.tint[1];
       colors[o + 2] = p.tint[2];
@@ -226,6 +230,9 @@ export function createEffects(scene) {
     addSkid,
     update,
     reset,
+    setLightTint(hex, scale = 1) {
+      smokeMaterial.uniforms.uLightTint.value.set(hex).multiplyScalar(scale);
+    },
     dispose() {
       scene.remove(smoke);
       scene.remove(skid);

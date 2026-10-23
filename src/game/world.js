@@ -89,6 +89,30 @@ export function createWorld(options) {
     options.assets,
   );
   carRoot.add(carModel);
+
+  // Twin car headlights + near road glow for dusk & midnight mountain runs!
+  const headlightTarget = new THREE.Object3D();
+  headlightTarget.position.set(0, 0.25, 34);
+  carRoot.add(headlightTarget);
+
+  const headlightSpot = new THREE.SpotLight(0xfff4de, 0, 125, 0.56, 0.52, 1.15);
+  headlightSpot.position.set(0, 0.85, 1.85);
+  headlightSpot.target = headlightTarget;
+  carRoot.add(headlightSpot);
+
+  const headlightNear = new THREE.PointLight(0xffeed2, 0, 22, 1.4);
+  headlightNear.position.set(0, 0.9, 3.2);
+  carRoot.add(headlightNear);
+
+  const syncHeadlights = () => {
+    const level = scene.palette.headlights ?? 0;
+    headlightSpot.intensity = level * 42;
+    headlightNear.intensity = level * 4.5;
+    const smokeScale = level > 0.5 ? 0.14 : level > 0.1 ? 0.55 : 0.85;
+    effects.setLightTint?.(scene.palette.foliageTint ?? '#ffffff', smokeScale);
+  };
+  syncHeadlights();
+
   scene.scene.add(carRoot);
 
   // The physics origin is the centre of mass, the model origin is the ground
@@ -219,17 +243,18 @@ export function createWorld(options) {
     smokeTimer += dt;
     const emitInterval = 0.03;
     for (const [index, wheel] of vehicle.wheels.entries()) {
-      const slipping = wheel.contact && (Math.abs(wheel.slipAngle) > 0.12 || Math.abs(wheel.slipRatio) > 0.25);
+      const slipping =
+        wheel.contact && (Math.abs(wheel.slipAngle) > 0.21 || Math.abs(wheel.slipRatio) > 0.58);
       if (!slipping || smokeTimer < emitInterval) continue;
       smokeTimer = 0;
-      const tint = wheel.onRoad ? [0.92, 0.92, 0.95] : [0.62, 0.5, 0.34];
+      const tint = wheel.onRoad ? [0.88, 0.9, 0.94] : [0.58, 0.46, 0.31];
       effects.emitSmoke(
         wheel.contactPoint.x,
-        wheel.contactPoint.y + 0.12,
+        wheel.contactPoint.y + 0.34,
         wheel.contactPoint.z,
         -vehicle.velocity.x * 0.35,
         -vehicle.velocity.z * 0.35,
-        clamp(Math.abs(wheel.slipAngle) * 4, 0.3, 1),
+        clamp(Math.abs(wheel.slipAngle) * 3.2, 0.25, 0.85),
         tint,
       );
       if (wheel.onRoad) {
@@ -401,6 +426,13 @@ export function createWorld(options) {
     setPalette(palette) {
       scene.setPalette?.(palette);
       renderer.setExposure?.(scene.palette.exposure ?? 1);
+      syncHeadlights();
+      const sDir = new THREE.Vector3(
+        scene.palette.sunX * 2 - 1,
+        scene.palette.sunY * 1.85 + 0.12,
+        -0.62,
+      ).normalize();
+      renderer.setSunDirection?.(sDir);
     },
     /**
      * @returns {{ speed: number, kmh: number, drift: number, multiplier: number, boost: number, onRoad: boolean, s: number }}

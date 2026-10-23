@@ -120,7 +120,15 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .screen[hidden] { display: none; }
 
-.screen--title { justify-content: center; gap: clamp(10px, 1.8vh, 22px); }
+.screen--title {
+  justify-content: center;
+  gap: clamp(10px, 1.8vh, 22px);
+  background:
+    radial-gradient(680px 520px at 50% 48%, rgba(8, 12, 24, 0.62), rgba(8, 12, 24, 0.24) 72%, rgba(8, 12, 24, 0.48) 100%),
+    linear-gradient(180deg, rgba(6, 10, 20, 0.28), rgba(6, 10, 20, 0.56));
+  backdrop-filter: blur(2px) saturate(112%);
+  -webkit-backdrop-filter: blur(2px) saturate(112%);
+}
 
 .screen--panel,
 .screen--lobby {
@@ -428,7 +436,7 @@ textarea.code {
 /* ------------------------------------------------------------ rotate hint */
 .rotate-hint {
   position: absolute;
-  top: calc(14px + var(--safe-t));
+  top: calc(64px + var(--safe-t));
   left: 50%;
   transform: translateX(-50%);
   z-index: 45;

@@ -41,6 +41,12 @@ export function createSelfTest(driftline) {
       }
     };
 
+    // Reset to a clean stationary start so selftest works even after autopilot driving.
+    world.setAutopilot?.(false);
+    driftline.input.clear();
+    world.respawn?.();
+    step(25);
+
     // --- the car drives ------------------------------------------------
     const startSpeed = vehicle.speed;
     key('ArrowUp', 'keydown');
@@ -66,9 +72,14 @@ export function createSelfTest(driftline) {
     step(60);
     const afterLeft = heading();
     key('ArrowLeft', 'keyup');
+    driftline.input.clear();
     check('left steers left', afterLeft > afterRight, `${afterRight.toFixed(2)} -> ${afterLeft.toFixed(2)}`);
 
     // --- the touch controls --------------------------------------------
+    const touchRoot = globalThis.document.getElementById('touch');
+    const wasTouchHidden = Boolean(touchRoot?.hidden);
+    if (touchRoot && wasTouchHidden) touchRoot.hidden = false;
+
     const gas = globalThis.document.getElementById('btn-gas');
     pointer(gas, 'pointerdown');
     driftline.input.update(1 / 60);
@@ -87,7 +98,7 @@ export function createSelfTest(driftline) {
 
     const pad = globalThis.document.getElementById('touch-steer');
     const rect = pad?.getBoundingClientRect();
-    if (rect) {
+    if (rect && rect.width > 0) {
       pad.dispatchEvent(
         new PointerEvent('pointerdown', {
           bubbles: true,
@@ -112,6 +123,7 @@ export function createSelfTest(driftline) {
     } else {
       check('the steering pad works', false, 'no pad found');
     }
+    if (touchRoot && wasTouchHidden) touchRoot.hidden = true;
 
     // --- the world -----------------------------------------------------
     const terrain = world.scene.terrain;

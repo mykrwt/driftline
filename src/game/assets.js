@@ -1,12 +1,9 @@
 /**
  * Asset pipeline.
  *
- * The world is built from CC0 asset packs (Kenney) that are vendored into
- * `assets/models`, plus a few procedural pieces. Everything is normalised on
- * load: models are scaled to real world metres, grounded on y = 0 and merged
- * where possible so the scene stays at a couple of dozen draw calls.
- *
- * Credits: Kenney (CC0) - car kit, racing kit, nature kit, city kit roads.
+ * Normalises CC0 Kenney models to real-world metres, applies natural multi-tone
+ * canopy & bark vertex shading, and bakes crisp mipmapped crossed-billboard
+ * impostors that respond dynamically to Alpine Day, Golden Hour, and Midnight.
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
@@ -23,11 +20,7 @@ const BASE = './assets/models/';
  * @property {string} [label]
  */
 
-/**
- * The cars are built procedurally (see car.js), so there are no car models
- * to download. The entry stays for the ghosts, which pick a shape.
- * @type {Record<string, CarAssetSpec>}
- */
+/** @type {Record<string, CarAssetSpec>} */
 export const CAR_ASSETS = {};
 
 /**
@@ -35,104 +28,135 @@ export const CAR_ASSETS = {};
  * @property {string} file
  * @property {number} height target height in metres (0 = keep as is)
  * @property {boolean} [keepScene] keep the original multi mesh scene
- * @property {number} [yaw] radians to turn the model before it is placed, for
- *   the models whose long axis is X instead of Z
+ * @property {number} [yaw] radians to turn the model before it is placed
  */
 
 /** @type {Record<string, PropAssetSpec>} */
 export const PROP_ASSETS = {
-  tree: { file: 'nature-kit/Models/GLTF format/tree_default.glb', height: 9 },
-  treeOak: { file: 'nature-kit/Models/GLTF format/tree_oak.glb', height: 11 },
-  treePine: { file: 'nature-kit/Models/GLTF format/tree_pineTallA.glb', height: 12 },
-  treePineShort: { file: 'nature-kit/Models/GLTF format/tree_pineRoundA.glb', height: 8 },
-  treePineSlim: { file: 'nature-kit/Models/GLTF format/tree_pineSmallA.glb', height: 9 },
-  treePineWide: { file: 'nature-kit/Models/GLTF format/tree_pineDefaultA.glb', height: 11 },
-  treeTall: { file: 'nature-kit/Models/GLTF format/tree_tall.glb', height: 12 },
-  treeFat: { file: 'nature-kit/Models/GLTF format/tree_fat.glb', height: 8 },
-  treeCone: { file: 'nature-kit/Models/GLTF format/tree_cone.glb', height: 10 },
-  treeDetailed: { file: 'nature-kit/Models/GLTF format/tree_detailed.glb', height: 11 },
+  tree: { file: 'nature-kit/Models/GLTF format/tree_default.glb', height: 9.5 },
+  treeOak: { file: 'nature-kit/Models/GLTF format/tree_oak.glb', height: 11.5 },
+  treePine: { file: 'nature-kit/Models/GLTF format/tree_pineTallA.glb', height: 13.5 },
+  treePineShort: { file: 'nature-kit/Models/GLTF format/tree_pineRoundA.glb', height: 8.5 },
+  treePineSlim: { file: 'nature-kit/Models/GLTF format/tree_pineSmallA.glb', height: 10 },
+  treePineWide: { file: 'nature-kit/Models/GLTF format/tree_pineDefaultA.glb', height: 12 },
+  treeTall: { file: 'nature-kit/Models/GLTF format/tree_tall.glb', height: 12.5 },
+  treeFat: { file: 'nature-kit/Models/GLTF format/tree_fat.glb', height: 8.5 },
+  treeCone: { file: 'nature-kit/Models/GLTF format/tree_cone.glb', height: 10.5 },
+  treeDetailed: { file: 'nature-kit/Models/GLTF format/tree_detailed.glb', height: 11.5 },
   treeSimple: { file: 'nature-kit/Models/GLTF format/tree_simple.glb', height: 9 },
   treePalm: { file: 'nature-kit/Models/GLTF format/tree_palmTall.glb', height: 10 },
-  bush: { file: 'nature-kit/Models/GLTF format/plant_bush.glb', height: 1.6 },
-  bushSmall: { file: 'nature-kit/Models/GLTF format/plant_bushSmall.glb', height: 0.9 },
-  bushLarge: { file: 'nature-kit/Models/GLTF format/plant_bushLarge.glb', height: 2.4 },
-  // The boulders are sized to a real car: the source models are metres
-  // across, and a rock that is more than about a metre and a half tall on a
-  // mountainside reads as a flying saucer rather than as a rock.
-  rock: { file: 'nature-kit/Models/GLTF format/rock_largeA.glb', height: 1.5 },
-  rockSmall: { file: 'nature-kit/Models/GLTF format/rock_smallA.glb', height: 0.8 },
-  rockTall: { file: 'nature-kit/Models/GLTF format/rock_tallA.glb', height: 2.0 },
-  stump: { file: 'nature-kit/Models/GLTF format/stump_round.glb', height: 1.4 },
-  log: { file: 'nature-kit/Models/GLTF format/log.glb', height: 1.2 },
+  bush: { file: 'nature-kit/Models/GLTF format/plant_bush.glb', height: 1.5 },
+  bushSmall: { file: 'nature-kit/Models/GLTF format/plant_bushSmall.glb', height: 0.85 },
+  bushLarge: { file: 'nature-kit/Models/GLTF format/plant_bushLarge.glb', height: 2.2 },
+  rock: { file: 'nature-kit/Models/GLTF format/rock_largeA.glb', height: 1.45 },
+  rockSmall: { file: 'nature-kit/Models/GLTF format/rock_smallA.glb', height: 0.72 },
+  rockTall: { file: 'nature-kit/Models/GLTF format/rock_tallA.glb', height: 1.95 },
+  stump: { file: 'nature-kit/Models/GLTF format/stump_round.glb', height: 0.85 },
+  log: { file: 'nature-kit/Models/GLTF format/log.glb', height: 0.9 },
   cactus: { file: 'nature-kit/Models/GLTF format/cactus_tall.glb', height: 3.4 },
-  grass: { file: 'nature-kit/Models/GLTF format/grass.glb', height: 0.8 },
-  cone: { file: 'city-kit-roads/Models/GLTF format/construction-cone.glb', height: 0.9, keepScene: true },
-  barrier: { file: 'racing-kit/Models/GLTF format/barrierRed.glb', height: 1.1, keepScene: true, yaw: Math.PI / 2 },
-  barrierWhite: { file: 'racing-kit/Models/GLTF format/barrierWhite.glb', height: 1.1, keepScene: true, yaw: Math.PI / 2 },
-  rail: { file: 'racing-kit/Models/GLTF format/rail.glb', height: 1.1, keepScene: true, yaw: Math.PI / 2 },
-  fence: { file: 'racing-kit/Models/GLTF format/fenceStraight.glb', height: 1.2, keepScene: true, yaw: Math.PI / 2 },
-  lightPost: { file: 'racing-kit/Models/GLTF format/lightPostModern.glb', height: 6.5, keepScene: true },
+  grass: { file: 'nature-kit/Models/GLTF format/grass.glb', height: 0.7 },
+  cone: { file: 'city-kit-roads/Models/GLTF format/construction-cone.glb', height: 0.85, keepScene: true },
+  barrier: { file: 'racing-kit/Models/GLTF format/barrierRed.glb', height: 1.0, keepScene: true, yaw: Math.PI / 2 },
+  barrierWhite: { file: 'racing-kit/Models/GLTF format/barrierWhite.glb', height: 1.0, keepScene: true, yaw: Math.PI / 2 },
+  rail: { file: 'racing-kit/Models/GLTF format/rail.glb', height: 1.05, keepScene: true, yaw: Math.PI / 2 },
+  fence: { file: 'racing-kit/Models/GLTF format/fenceStraight.glb', height: 1.15, keepScene: true, yaw: Math.PI / 2 },
+  lightPost: { file: 'racing-kit/Models/GLTF format/lightPostModern.glb', height: 6.2, keepScene: true },
   gantry: { file: 'racing-kit/Models/GLTF format/overhead.glb', height: 8, keepScene: true },
   flag: { file: 'racing-kit/Models/GLTF format/flagCheckers.glb', height: 2.2, keepScene: true },
   billboard: { file: 'racing-kit/Models/GLTF format/billboard.glb', height: 5, keepScene: true, yaw: Math.PI / 2 },
   grandStand: { file: 'racing-kit/Models/GLTF format/grandStand.glb', height: 8, keepScene: true },
   pylon: { file: 'racing-kit/Models/GLTF format/pylon.glb', height: 1.2, keepScene: true },
-  sign: { file: 'city-kit-roads/Models/GLTF format/road-sign-empty.glb', height: 3.2, keepScene: true },
+  sign: { file: 'city-kit-roads/Models/GLTF format/road-sign-empty.glb', height: 2.9, keepScene: true },
   pole: { file: 'city-kit-roads/Models/GLTF format/electricity-pole.glb', height: 8, keepScene: true },
 };
 
 /**
- * The palette of the scenery.
- *
- * The source models use a bright stylised palette (teal leaves, orange bark),
- * so every prop is re-tinted into a natural one: foliage green, brown wood
- * and grey rock.
+ * Rich sunlit natural alpine foliage, bark, and granite rock palette.
  */
 export const PROP_TINTS = {
-  treeOak: { foliage: '#5a8a41', wood: '#7a583a' },
-  tree: { foliage: '#4a7a35', wood: '#6f4f33' },
-  treePine: { foliage: '#417a4c', wood: '#63462e' },
-  treePineShort: { foliage: '#3c7146', wood: '#63462e' },
-  treePineSlim: { foliage: '#3c6f47', wood: '#5d4229' },
-  treePineWide: { foliage: '#417a4c', wood: '#6b4d33' },
-  treeTall: { foliage: '#4d7d38', wood: '#71522f' },
-  treeFat: { foliage: '#568c3f', wood: '#6f4f33' },
-  treeCone: { foliage: '#3d7038', wood: '#6a4a30' },
-  treeDetailed: { foliage: '#477a37', wood: '#6b4c30' },
-  treeSimple: { foliage: '#5b8c44', wood: '#7a583a' },
-  treePalm: { foliage: '#4a8446', wood: '#8a6a44' },
-  bush: { foliage: '#5e8c44', wood: '#6f4f33' },
-  bushSmall: { foliage: '#67964a', wood: '#6f4f33' },
-  bushLarge: { foliage: '#557f3e', wood: '#6f4f33' },
-  grass: { foliage: '#7aa654', wood: '#7aa654' },
-  rock: { foliage: '#989ba2', wood: '#878a91' },
-  rockSmall: { foliage: '#9ea1a8', wood: '#8d9097' },
-  rockTall: { foliage: '#8b8e95', wood: '#7d8087' },
-  stump: { foliage: '#7a583a', wood: '#7a583a' },
-  log: { foliage: '#7a583a', wood: '#7a583a' },
-  cactus: { foliage: '#568a4b', wood: '#568a4b' },
+  treeOak: { foliage: '#689e48', foliageShade: '#365e2a', wood: '#7d5b3e' },
+  tree: { foliage: '#5b9240', foliageShade: '#2e5525', wood: '#735337' },
+  treePine: { foliage: '#437f52', foliageShade: '#1f4730', wood: '#664830' },
+  treePineShort: { foliage: '#498656', foliageShade: '#224b33', wood: '#664830' },
+  treePineSlim: { foliage: '#3e774c', foliageShade: '#1d422c', wood: '#60432b' },
+  treePineWide: { foliage: '#478355', foliageShade: '#214931', wood: '#6d4f35' },
+  treeTall: { foliage: '#5f9643', foliageShade: '#315928', wood: '#755532' },
+  treeFat: { foliage: '#6aa14b', foliageShade: '#365f2b', wood: '#725236' },
+  treeCone: { foliage: '#468049', foliageShade: '#214829', wood: '#6c4c32' },
+  treeDetailed: { foliage: '#598f42', foliageShade: '#2f5626', wood: '#6e4f33' },
+  treeSimple: { foliage: '#6ba04c', foliageShade: '#38622c', wood: '#7d5b3d' },
+  treePalm: { foliage: '#58944f', foliageShade: '#2d5830', wood: '#8d6d47' },
+  bush: { foliage: '#6b9f4c', foliageShade: '#39622b', wood: '#705034' },
+  bushSmall: { foliage: '#74a854', foliageShade: '#3f6930', wood: '#705034' },
+  bushLarge: { foliage: '#609246', foliageShade: '#335927', wood: '#705034' },
+  grass: { foliage: '#84b25c', foliageShade: '#4c7534', wood: '#84b25c' },
+  rock: { foliage: '#9599a1', foliageShade: '#666b75', wood: '#888c94' },
+  rockSmall: { foliage: '#9da1a9', foliageShade: '#6c707a', wood: '#8f939b' },
+  rockTall: { foliage: '#8c9099', foliageShade: '#5e626c', wood: '#7f838b' },
+  stump: { foliage: '#856244', foliageShade: '#533b27', wood: '#856244' },
+  log: { foliage: '#825f41', foliageShade: '#513925', wood: '#825f41' },
+  cactus: { foliage: '#5c9150', foliageShade: '#335830', wood: '#5c9150' },
 };
 
 /**
+ * Determine sunlit & shaded tint colours for a material group.
  * @param {THREE.Material} material
- * @param {{ foliage?: string, wood?: string } | null} tints
- * @returns {THREE.Color | null}
+ * @param {{ foliage?: string, foliageShade?: string, wood?: string } | null} tints
  */
-function tintFor(material, tints) {
+function tintPairFor(material, tints) {
   if (!tints) return null;
   const color = /** @type {any} */ (material)?.color;
   if (!color) return null;
-  // The teal foliage is the only material with more green than red.
-  const foliage = color.g >= color.r;
-  const hex = foliage ? tints.foliage : tints.wood;
-  return hex ? new THREE.Color(hex) : null;
+  const isFoliage = color.g >= color.r;
+  if (isFoliage && tints.foliage) {
+    const hi = new THREE.Color(tints.foliage);
+    const lo = tints.foliageShade ? new THREE.Color(tints.foliageShade) : hi.clone().multiplyScalar(0.58);
+    return { hi, lo, foliage: true };
+  }
+  if (tints.wood) {
+    const hi = new THREE.Color(tints.wood);
+    const lo = hi.clone().multiplyScalar(0.66);
+    return { hi, lo, foliage: false };
+  }
+  return null;
 }
 
 /**
- * Re-tint a whole scene: every mesh gets the colour of its material group.
- *
+ * Write natural height + normal crown shading into geometry vertex colours.
+ * @param {THREE.BufferGeometry} geometry
+ * @param {{ hi: THREE.Color, lo: THREE.Color }} pair
+ */
+function applyCrownGradient(geometry, pair) {
+  const pos = geometry.getAttribute('position');
+  if (!pos) return;
+  if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
+  const nor = geometry.getAttribute('normal');
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const span = Math.max(0.001, maxY - minY);
+  const colors = new Float32Array(pos.count * 3);
+  const tmp = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const hNorm = (pos.getY(i) - minY) / span;
+    const upLight = nor ? Math.max(0, nor.getY(i) * 0.5 + 0.5) : 0.65;
+    const t = Math.min(1, Math.max(0, hNorm * 0.68 + upLight * 0.32));
+    tmp.copy(pair.lo).lerp(pair.hi, t);
+    colors[i * 3] = tmp.r;
+    colors[i * 3 + 1] = tmp.g;
+    colors[i * 3 + 2] = tmp.b;
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+}
+
+/**
+ * Re-tint a whole scene with rich 3D crown gradients before impostor baking.
  * @param {THREE.Object3D} root
- * @param {{ foliage?: string, wood?: string } | null} tints
+ * @param {{ foliage?: string, foliageShade?: string, wood?: string } | null} tints
  */
 function tintScene(root, tints) {
   if (!tints) return;
@@ -140,28 +164,17 @@ function tintScene(root, tints) {
     if (!(object instanceof THREE.Mesh)) return;
     const material = object.material;
     if (Array.isArray(material)) return;
-    const tint = tintFor(material, tints);
-    if (!tint) return;
-    // The geometry is cloned: the source scene is shared with the props and
-    // it must not be changed underneath them.
+    const pair = tintPairFor(material, tints);
+    if (!pair) return;
     const geometry = object.geometry.clone();
-    const count = geometry.getAttribute('position')?.count ?? 0;
-    const colors = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      colors[i * 3] = tint.r;
-      colors[i * 3 + 1] = tint.g;
-      colors[i * 3 + 2] = tint.b;
-    }
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    applyCrownGradient(geometry, pair);
     object.geometry = geometry;
-    // The clone shares the materials with the source, so they are copied
-    // before they are changed.
     const own = material.clone();
     own.color = new THREE.Color(0xffffff);
     own.vertexColors = true;
-    // The models use a palette texture: the tint is the final colour, so
-    // the texture has to go or it would darken everything twice.
     own.map = null;
+    own.roughness = 0.88;
+    own.metalness = 0.0;
     own.needsUpdate = true;
     object.material = own;
   });
@@ -170,29 +183,23 @@ function tintScene(root, tints) {
 /**
  * @param {THREE.BufferGeometry} geometry
  * @param {THREE.Material | THREE.Material[]} material
- * @param {THREE.Color | null} [tint]
+ * @param {{ hi: THREE.Color, lo: THREE.Color } | null} [pair]
  * @returns {THREE.BufferGeometry}
  */
-function normalizeGeometry(geometry, material, tint = null) {
+function normalizeGeometry(geometry, material, pair = null) {
   const clone = geometry.clone();
   clone.applyMatrix4(geometry.userData?.worldMatrix ?? new THREE.Matrix4());
   if (!clone.getAttribute('normal')) clone.computeVertexNormals();
 
-  // Every merged geometry needs the same set of attributes.
   const count = clone.getAttribute('position').count;
-  if (tint) {
-    // The tint replaces the colour of the model completely.
-    const colors = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      colors[i * 3] = tint.r;
-      colors[i * 3 + 1] = tint.g;
-      colors[i * 3 + 2] = tint.b;
-    }
-    clone.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  if (pair) {
+    applyCrownGradient(clone, pair);
   } else if (!clone.getAttribute('color')) {
     const materialColor = new THREE.Color(0xffffff);
     if (Array.isArray(material) && material[0]?.color) materialColor.copy(material[0].color);
-    else if (!Array.isArray(material) && /** @type {any} */ (material)?.color) materialColor.copy(/** @type {any} */ (material).color);
+    else if (!Array.isArray(material) && /** @type {any} */ (material)?.color) {
+      materialColor.copy(/** @type {any} */ (material).color);
+    }
     const colors = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
       colors[i * 3] = materialColor.r;
@@ -204,7 +211,6 @@ function normalizeGeometry(geometry, material, tint = null) {
   if (!clone.getAttribute('uv')) {
     clone.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(count * 2), 2));
   }
-  // Drop everything else so the merge never fails.
   for (const name of Object.keys(clone.attributes)) {
     if (!['position', 'normal', 'color', 'uv'].includes(name)) clone.deleteAttribute(name);
   }
@@ -212,12 +218,6 @@ function normalizeGeometry(geometry, material, tint = null) {
   return clone;
 }
 
-/**
- * Scale and ground a model so it sits in the world like a real object.
- * @param {THREE.Object3D} root
- * @param {number} targetHeight desired height in metres (0 keeps the size)
- * @param {number} [length] desired length in metres
- */
 /**
  * Reject a promise that takes too long.
  * @template T
@@ -243,8 +243,6 @@ function withTimeout(promise, ms, label) {
 }
 
 function normalizeScene(root, targetHeight, length, yaw = 0) {
-  // Some models are built along X instead of Z; a quarter turn lays them out
-  // along the road before anything else measures them.
   if (yaw) {
     root.rotation.y = yaw;
     root.updateMatrixWorld(true);
@@ -268,10 +266,6 @@ function normalizeScene(root, targetHeight, length, yaw = 0) {
   const finalBox = new THREE.Box3().setFromObject(root);
   const finalSize = new THREE.Vector3();
   finalBox.getSize(finalSize);
-  // Ground the model and centre it on its own footprint. The source models
-  // do not agree on where their origin is - a lamp post is modelled from the
-  // end of its arm, a guard rail from one end - and a prop that is placed by
-  // its origin then stands metres away from where it was put.
   root.position.x -= finalBox.min.x + finalSize.x / 2;
   root.position.z -= finalBox.min.z + finalSize.z / 2;
   root.position.y -= finalBox.min.y;
@@ -281,7 +275,7 @@ function normalizeScene(root, targetHeight, length, yaw = 0) {
 /**
  * Merge a model into one geometry per material so it can be instanced.
  * @param {THREE.Object3D} root
- * @param {{ foliage?: string, wood?: string } | null} [tints]
+ * @param {{ foliage?: string, foliageShade?: string, wood?: string } | null} [tints]
  * @returns {{ geometry: THREE.BufferGeometry, material: THREE.Material }[]}
  */
 function mergeByMaterial(root, tints = null) {
@@ -296,8 +290,8 @@ function mergeByMaterial(root, tints = null) {
       groups.set(key, { material: Array.isArray(material) ? material[0] : material, parts: [] });
     }
     const group = groups.get(key);
-    const tint = tintFor(group.material, tints);
-    const geometry = normalizeGeometry(object.geometry, group.material, tint);
+    const pair = tintPairFor(group.material, tints);
+    const geometry = normalizeGeometry(object.geometry, group.material, pair);
     geometry.applyMatrix4(object.matrixWorld);
     group.parts.push(geometry);
   });
@@ -309,13 +303,11 @@ function mergeByMaterial(root, tints = null) {
     group.parts.forEach((part) => part.dispose());
     merged.computeBoundingSphere();
     const material = group.material?.clone?.() ?? new THREE.MeshStandardMaterial({ color: 0xffffff });
-    material.roughness = 0.85;
+    material.roughness = 0.86;
     material.metalness = 0.02;
-    // The tint lives in the vertex colours, so the material stays white.
     if (tints) {
       material.color = new THREE.Color(0xffffff);
       material.vertexColors = true;
-      // The models use a palette texture: the tint is the final colour.
       material.map = null;
     }
     if (material.map) material.map.colorSpace = THREE.SRGBColorSpace;
@@ -331,21 +323,18 @@ export function createAssetLibrary() {
   const loader = new GLTFLoader();
   /** @type {Map<string, any>} */
   const scenes = new Map();
-  /** @type {Map<string, { geometry: THREE.BufferGeometry, material: THREE.Material }>} */
+  /** @type {Map<string, { groups: { geometry: THREE.BufferGeometry, material: THREE.Material }[] }>} */
   const props = new Map();
-  /** @type {Map<string, { geometry: THREE.BufferGeometry, material: THREE.Material }>} */
+  /** @type {Map<string, { geometry: THREE.BufferGeometry, material: THREE.MeshStandardMaterial }>} */
   const impostors = new Map();
   /** @type {Record<string, HTMLImageElement>} */
   const textures = {};
-  /** @type {Map<string, { body: THREE.Object3D, wheels: THREE.Object3D[] }>} */
+  /** @type {Map<string, { root: THREE.Object3D, wheels: THREE.Object3D[] }>} */
   const cars = new Map();
   let ready = false;
+  let currentTint = '#ffffff';
+  let currentEmissive = 0.56;
 
-  /**
-   * @param {string} key
-   * @param {string} file
-   * @returns {Promise<any>}
-   */
   async function loadScene(key, file) {
     if (scenes.has(key)) return scenes.get(key);
     const promise = loader.loadAsync(BASE + file).then((gltf) => {
@@ -356,10 +345,6 @@ export function createAssetLibrary() {
     return promise;
   }
 
-  /**
-   * @param {string} key
-   * @param {PropAssetSpec} spec
-   */
   async function loadProp(key, spec) {
     const scene = await loadScene(key, spec.file);
     const clone = scene.clone(true);
@@ -368,10 +353,6 @@ export function createAssetLibrary() {
     return { groups };
   }
 
-  /**
-   * @param {string} key
-   * @param {CarAssetSpec} spec
-   */
   async function loadCar(key, spec) {
     const scene = await loadScene(key, spec.file);
     const clone = scene.clone(true);
@@ -395,19 +376,11 @@ export function createAssetLibrary() {
     });
 
     const root = new THREE.Group();
-    for (const part of bodyParts) {
-      part.position.sub(new THREE.Vector3(0, 0, 0));
-      root.add(part);
-    }
+    for (const part of bodyParts) root.add(part);
     for (const wheel of wheels) root.add(wheel);
-
     return { root, wheels };
   }
 
-  /**
-   * @param {string} name
-   * @returns {Promise<HTMLImageElement>}
-   */
   function loadTexture(name) {
     return new Promise((resolve) => {
       const image = new Image();
@@ -418,18 +391,12 @@ export function createAssetLibrary() {
   }
 
   return {
-    /** @returns {boolean} */
     get ready() {
       return ready;
     },
-    /** @returns {Record<string, HTMLImageElement>} */
     get textures() {
       return textures;
     },
-    /**
-     * Load everything up front so the race never stutters.
-     * @param {(loaded: number, total: number) => void} [onProgress]
-     */
     async loadAll(onProgress) {
       const total = Object.keys(CAR_ASSETS).length + Object.keys(PROP_ASSETS).length + 2;
       let done = 0;
@@ -452,7 +419,6 @@ export function createAssetLibrary() {
         ),
       ];
       await Promise.all(jobs);
-      // Photographic ground textures (CC0, Poly Haven).
       await Promise.all([
         loadTexture('asphalt_diff').then((image) => {
           textures.asphalt = image;
@@ -464,65 +430,54 @@ export function createAssetLibrary() {
       ready = true;
       return { cars, props, textures };
     },
-    /**
-     * @param {string} key
-     * @returns {{ body: THREE.Object3D, wheels: THREE.Object3D[] } | null}
-     */
     car(key) {
       return cars.get(key) ?? null;
     },
-    /**
-     * @param {string} key
-     * @returns {{ groups: { geometry: THREE.BufferGeometry, material: THREE.Material }[] } | null}
-     */
     prop(key) {
       return props.get(key) ?? null;
     },
     /**
-     * Build a billboard impostor for a model: the model is rendered once into
-     * a texture and then drawn with a few crossed quads, which is far cheaper
-     * than thousands of real trees.
+     * Bake a high-contrast sunlit 3D billboard impostor with mipmaps & live
+     * time-of-day mood support.
      * @param {any} renderer
      * @param {string} key
      * @param {{ size?: number }} [options]
-     * @returns {{ geometry: THREE.BufferGeometry, material: THREE.Material } | null}
      */
     impostor(renderer, key, options = {}) {
       const cacheKey = `impostor:${key}`;
       if (impostors.has(cacheKey)) return impostors.get(cacheKey);
       const source = scenes.get(key);
-      if (!source) return null;
+      if (!source || typeof source.clone !== 'function') return null;
 
-      const size = options.size ?? 192;
+      const size = options.size ?? 256;
       const preview = new THREE.Scene();
       const clone = source.clone(true);
-      // The source models use a teal palette, so they are re-tinted before
-      // they are baked into the billboard.
       tintScene(clone, PROP_TINTS[key] ?? null);
-      // The billboard has the size of the real thing, so the trees stand on
-      // the ground like the models do.
       normalizeScene(clone, PROP_ASSETS[key]?.height ?? 0, undefined, PROP_ASSETS[key]?.yaw ?? 0);
       preview.add(clone);
+
       const box = new THREE.Box3().setFromObject(clone);
       const dimensions = new THREE.Vector3();
       const centre = new THREE.Vector3();
       box.getSize(dimensions);
       box.getCenter(centre);
 
-      // Light the preview so the baked texture has the real colours. The
-      // light is flat on purpose: a tree that is baked with a hard key light
-      // comes out half black.
-      preview.add(new THREE.HemisphereLight(0xbfd7ff, 0x6a7a62, 2.6));
-      preview.add(new THREE.AmbientLight(0xffffff, 1.1));
-      const keyLight = new THREE.DirectionalLight(0xfff2d6, 1.5);
-      keyLight.position.set(centre.x + 30, centre.y + 40, 40);
+      // Natural outdoor bake rig: warm golden sun from upper right + cool alpine sky fill.
+      preview.add(new THREE.HemisphereLight(0xd4e8ff, 0x5c6f52, 2.25));
+      preview.add(new THREE.AmbientLight(0xffffff, 0.85));
+      const keyLight = new THREE.DirectionalLight(0xfff1cf, 2.35);
+      keyLight.position.set(centre.x + 36, centre.y + 52, 42);
       preview.add(keyLight);
+      const rimLight = new THREE.DirectionalLight(0xbcd9ff, 0.75);
+      rimLight.position.set(centre.x - 32, centre.y + 24, 28);
+      preview.add(rimLight);
 
-      const width = Math.max(32, Math.round(size));
-      const height = Math.max(32, Math.round((size * dimensions.y) / Math.max(0.001, dimensions.x)));
+      const width = Math.max(64, Math.round(size));
+      const height = Math.max(64, Math.round((size * dimensions.y) / Math.max(0.001, dimensions.x)));
       const target = new THREE.WebGLRenderTarget(width, height, {
-        minFilter: THREE.LinearFilter,
+        minFilter: THREE.LinearMipmapLinearFilter,
         magFilter: THREE.LinearFilter,
+        generateMipmaps: true,
         depthBuffer: true,
       });
       const camera = new THREE.OrthographicCamera(
@@ -535,36 +490,35 @@ export function createAssetLibrary() {
       );
       camera.position.set(centre.x, centre.y, 60);
       camera.lookAt(centre);
+
       const previousTarget = renderer.getRenderTarget();
       const previousClear = renderer.getClearColor(new THREE.Color());
       const previousAlpha = renderer.getClearAlpha();
-      // The colour space has to be set before the render: the renderer writes
-      // sRGB into the target, and the shader reads it back as sRGB.
+      const previousToneMapping = renderer.toneMapping;
+      // Render raw sRGB without double tone-mapping compression during the bake!
+      renderer.toneMapping = THREE.NoToneMapping;
       target.texture.colorSpace = THREE.SRGBColorSpace;
       renderer.setRenderTarget(target);
-      renderer.setClearColor(0x000000, 0);
+      renderer.setClearColor(0x2a4528, 0);
       renderer.clear();
       renderer.render(preview, camera);
       renderer.setRenderTarget(previousTarget);
       renderer.setClearColor(previousClear, previousAlpha);
+      renderer.toneMapping = previousToneMapping;
 
       const geometry = createImpostorGeometry(dimensions.x, dimensions.y);
       const material = new THREE.MeshStandardMaterial({
         map: target.texture,
-        alphaTest: 0.45,
+        alphaTest: 0.42,
         side: THREE.DoubleSide,
-        roughness: 0.95,
+        roughness: 0.94,
         metalness: 0,
-        // The shading is already baked into the texture, and a crossed quad
-        // has no sensible normal of its own: lit by the scene alone a tree
-        // in the shade of a mountain turns into a black cut-out. Most of the
-        // colour therefore comes from the texture itself and the sun only
-        // adds to it.
-        emissive: new THREE.Color(0xffffff),
+        color: new THREE.Color(currentTint),
+        emissive: new THREE.Color(currentTint),
         emissiveMap: target.texture,
-        emissiveIntensity: 0.88,
+        emissiveIntensity: currentEmissive,
       });
-      // A gentle wind sway keeps the far forest alive.
+
       const timeUniform = { value: 0 };
       material.userData.time = timeUniform;
       material.onBeforeCompile = (shader) => {
@@ -573,12 +527,10 @@ export function createAssetLibrary() {
           '#include <begin_vertex>',
           `#include <begin_vertex>
            #ifdef USE_INSTANCING
-             // A slow, small sway. Anything more and the trees look like
-             // they are wobbling instead of standing in the wind.
              float phase = instanceMatrix[3].x * 0.21 + instanceMatrix[3].z * 0.17;
              float sway = sin(uTime * 0.9 + phase) * 0.6
                         + sin(uTime * 1.7 + phase * 1.7) * 0.25;
-             transformed.x += sway * 0.018 * max(0.0, transformed.y);
+             transformed.x += sway * 0.016 * max(0.0, transformed.y);
            #endif`,
         );
       };
@@ -586,21 +538,29 @@ export function createAssetLibrary() {
       impostors.set(cacheKey, result);
       return result;
     },
-    /** @returns {string[]} */
+    /**
+     * Update foliage lighting mood live when switching Alpine Day / Golden Hour / Midnight.
+     * @param {string} tintHex
+     * @param {number} emissiveIntensity
+     */
+    setPaletteMood(tintHex = '#ffffff', emissiveIntensity = 0.56) {
+      currentTint = tintHex;
+      currentEmissive = emissiveIntensity;
+      for (const entry of impostors.values()) {
+        entry.material.color.set(tintHex);
+        entry.material.emissive.set(tintHex);
+        entry.material.emissiveIntensity = emissiveIntensity;
+      }
+    },
     carKeys() {
       return Array.from(cars.keys());
     },
-    /**
-     * Advance the animated materials (the wind on the far forest).
-     * @param {number} time seconds
-     */
     tick(time) {
       for (const entry of impostors.values()) {
         const uniform = entry.material.userData?.time;
         if (uniform) uniform.value = time;
       }
     },
-    /** @returns {string[]} */
     propKeys() {
       return Array.from(props.keys());
     },

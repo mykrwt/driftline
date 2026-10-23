@@ -209,7 +209,7 @@ export function createWorldScene(profile, options) {
           vec4 detailTexel = texture2D( map, vMapUv );
           // The tile is a detail layer: it breaks up the flat vertex colour
           // without taking the palette away.
-          vec3 detail = mix( vec3( 1.0 ), detailTexel.rgb * 3.4, 0.55 );
+          vec3 detail = mix( vec3( 1.0 ), detailTexel.rgb * 3.4, 0.75 );
           diffuseColor.rgb *= detail;
         #endif
         `,
@@ -217,14 +217,6 @@ export function createWorldScene(profile, options) {
     };
   }
 
-  const chunks = createChunkManager({
-    profile,
-    scene,
-    assets: options.assets,
-    seed: options.seed,
-    roadMaterial,
-    terrainMaterial,
-  });
 
   // The trees are billboards: the model is baked into a texture once and
   // drawn with crossed quads afterwards. They are baked on demand, because a
@@ -268,6 +260,19 @@ export function createWorldScene(profile, options) {
     assets: options.assets,
     getImpostor,
     waterMaterial: water.material,
+  });
+
+  // The road and its furniture are placed against the drawn ribbon, not
+  // against the analytic height, so the verge never opens a gap under them.
+  const chunks = createChunkManager({
+    profile,
+    scene,
+    assets: options.assets,
+    seed: options.seed,
+    roadMaterial,
+    terrainMaterial,
+    groundHeight: (s, lateral) => terrain.sampleHeight(s, lateral),
+    groundCell: (s, lateral) => terrain.sampleCell(s, lateral),
   });
 
   return {

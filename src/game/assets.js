@@ -35,6 +35,8 @@ export const CAR_ASSETS = {};
  * @property {string} file
  * @property {number} height target height in metres (0 = keep as is)
  * @property {boolean} [keepScene] keep the original multi mesh scene
+ * @property {number} [yaw] radians to turn the model before it is placed, for
+ *   the models whose long axis is X instead of Z
  */
 
 /** @type {Record<string, PropAssetSpec>} */
@@ -54,22 +56,25 @@ export const PROP_ASSETS = {
   bush: { file: 'nature-kit/Models/GLTF format/plant_bush.glb', height: 1.6 },
   bushSmall: { file: 'nature-kit/Models/GLTF format/plant_bushSmall.glb', height: 0.9 },
   bushLarge: { file: 'nature-kit/Models/GLTF format/plant_bushLarge.glb', height: 2.4 },
-  rock: { file: 'nature-kit/Models/GLTF format/rock_largeA.glb', height: 2.4 },
-  rockSmall: { file: 'nature-kit/Models/GLTF format/rock_smallA.glb', height: 1.1 },
-  rockTall: { file: 'nature-kit/Models/GLTF format/rock_tallA.glb', height: 3.2 },
+  // The boulders are sized to a real car: the source models are metres
+  // across, and a rock that is more than about a metre and a half tall on a
+  // mountainside reads as a flying saucer rather than as a rock.
+  rock: { file: 'nature-kit/Models/GLTF format/rock_largeA.glb', height: 1.5 },
+  rockSmall: { file: 'nature-kit/Models/GLTF format/rock_smallA.glb', height: 0.8 },
+  rockTall: { file: 'nature-kit/Models/GLTF format/rock_tallA.glb', height: 2.0 },
   stump: { file: 'nature-kit/Models/GLTF format/stump_round.glb', height: 1.4 },
   log: { file: 'nature-kit/Models/GLTF format/log.glb', height: 1.2 },
   cactus: { file: 'nature-kit/Models/GLTF format/cactus_tall.glb', height: 3.4 },
   grass: { file: 'nature-kit/Models/GLTF format/grass.glb', height: 0.8 },
   cone: { file: 'city-kit-roads/Models/GLTF format/construction-cone.glb', height: 0.9, keepScene: true },
-  barrier: { file: 'racing-kit/Models/GLTF format/barrierRed.glb', height: 1.1, keepScene: true },
-  barrierWhite: { file: 'racing-kit/Models/GLTF format/barrierWhite.glb', height: 1.1, keepScene: true },
-  rail: { file: 'racing-kit/Models/GLTF format/rail.glb', height: 1.1, keepScene: true },
-  fence: { file: 'racing-kit/Models/GLTF format/fenceStraight.glb', height: 1.2, keepScene: true },
+  barrier: { file: 'racing-kit/Models/GLTF format/barrierRed.glb', height: 1.1, keepScene: true, yaw: Math.PI / 2 },
+  barrierWhite: { file: 'racing-kit/Models/GLTF format/barrierWhite.glb', height: 1.1, keepScene: true, yaw: Math.PI / 2 },
+  rail: { file: 'racing-kit/Models/GLTF format/rail.glb', height: 1.1, keepScene: true, yaw: Math.PI / 2 },
+  fence: { file: 'racing-kit/Models/GLTF format/fenceStraight.glb', height: 1.2, keepScene: true, yaw: Math.PI / 2 },
   lightPost: { file: 'racing-kit/Models/GLTF format/lightPostModern.glb', height: 6.5, keepScene: true },
   gantry: { file: 'racing-kit/Models/GLTF format/overhead.glb', height: 8, keepScene: true },
   flag: { file: 'racing-kit/Models/GLTF format/flagCheckers.glb', height: 2.2, keepScene: true },
-  billboard: { file: 'racing-kit/Models/GLTF format/billboard.glb', height: 5, keepScene: true },
+  billboard: { file: 'racing-kit/Models/GLTF format/billboard.glb', height: 5, keepScene: true, yaw: Math.PI / 2 },
   grandStand: { file: 'racing-kit/Models/GLTF format/grandStand.glb', height: 8, keepScene: true },
   pylon: { file: 'racing-kit/Models/GLTF format/pylon.glb', height: 1.2, keepScene: true },
   sign: { file: 'city-kit-roads/Models/GLTF format/road-sign-empty.glb', height: 3.2, keepScene: true },
@@ -86,9 +91,9 @@ export const PROP_ASSETS = {
 export const PROP_TINTS = {
   treeOak: { foliage: '#5a8a41', wood: '#7a583a' },
   tree: { foliage: '#4a7a35', wood: '#6f4f33' },
-  treePine: { foliage: '#376a42', wood: '#63462e' },
+  treePine: { foliage: '#417a4c', wood: '#63462e' },
   treePineShort: { foliage: '#3c7146', wood: '#63462e' },
-  treePineSlim: { foliage: '#2f5c3a', wood: '#5d4229' },
+  treePineSlim: { foliage: '#3c6f47', wood: '#5d4229' },
   treePineWide: { foliage: '#417a4c', wood: '#6b4d33' },
   treeTall: { foliage: '#4d7d38', wood: '#71522f' },
   treeFat: { foliage: '#568c3f', wood: '#6f4f33' },
@@ -237,7 +242,13 @@ function withTimeout(promise, ms, label) {
   });
 }
 
-function normalizeScene(root, targetHeight, length) {
+function normalizeScene(root, targetHeight, length, yaw = 0) {
+  // Some models are built along X instead of Z; a quarter turn lays them out
+  // along the road before anything else measures them.
+  if (yaw) {
+    root.rotation.y = yaw;
+    root.updateMatrixWorld(true);
+  }
   const box = new THREE.Box3().setFromObject(root);
   const size = new THREE.Vector3();
   box.getSize(size);
@@ -255,6 +266,14 @@ function normalizeScene(root, targetHeight, length) {
   }
 
   const finalBox = new THREE.Box3().setFromObject(root);
+  const finalSize = new THREE.Vector3();
+  finalBox.getSize(finalSize);
+  // Ground the model and centre it on its own footprint. The source models
+  // do not agree on where their origin is - a lamp post is modelled from the
+  // end of its arm, a guard rail from one end - and a prop that is placed by
+  // its origin then stands metres away from where it was put.
+  root.position.x -= finalBox.min.x + finalSize.x / 2;
+  root.position.z -= finalBox.min.z + finalSize.z / 2;
   root.position.y -= finalBox.min.y;
   root.updateMatrixWorld(true);
 }
@@ -344,7 +363,7 @@ export function createAssetLibrary() {
   async function loadProp(key, spec) {
     const scene = await loadScene(key, spec.file);
     const clone = scene.clone(true);
-    normalizeScene(clone, spec.height);
+    normalizeScene(clone, spec.height, undefined, spec.yaw ?? 0);
     const groups = mergeByMaterial(clone, PROP_TINTS[key] ?? null);
     return { groups };
   }
@@ -482,7 +501,7 @@ export function createAssetLibrary() {
       tintScene(clone, PROP_TINTS[key] ?? null);
       // The billboard has the size of the real thing, so the trees stand on
       // the ground like the models do.
-      normalizeScene(clone, PROP_ASSETS[key]?.height ?? 0);
+      normalizeScene(clone, PROP_ASSETS[key]?.height ?? 0, undefined, PROP_ASSETS[key]?.yaw ?? 0);
       preview.add(clone);
       const box = new THREE.Box3().setFromObject(clone);
       const dimensions = new THREE.Vector3();
@@ -536,11 +555,14 @@ export function createAssetLibrary() {
         side: THREE.DoubleSide,
         roughness: 0.95,
         metalness: 0,
-        // The texture lights itself a little, so a tree in the shade of a
-        // mountain does not turn into a black blob.
-        emissive: new THREE.Color(0x2b3328),
+        // The shading is already baked into the texture, and a crossed quad
+        // has no sensible normal of its own: lit by the scene alone a tree
+        // in the shade of a mountain turns into a black cut-out. Most of the
+        // colour therefore comes from the texture itself and the sun only
+        // adds to it.
+        emissive: new THREE.Color(0xffffff),
         emissiveMap: target.texture,
-        emissiveIntensity: 0.55,
+        emissiveIntensity: 0.88,
       });
       // A gentle wind sway keeps the far forest alive.
       const timeUniform = { value: 0 };

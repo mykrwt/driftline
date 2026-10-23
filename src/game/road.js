@@ -260,12 +260,30 @@ export function terrainRelief(profile, s, lateral) {
   const wallNoise = fbm(s * 0.00115 + side * 7.7, side * 2.2, 3, seed + 911);
   const wallHeight = 58 + (wallNoise * 0.5 + 0.5) * 96;
   const wallStart = 26 + (wallNoise * 0.5 + 0.5) * 88;
-  const climb = 1 - Math.exp(-Math.pow(dist / 130, 1.8));
+
+  // The foot of the wall meanders. Spurs push out towards the road and
+  // gullies cut back into the mountain, and this side to side movement is
+  // what the eye actually reads on a face that is almost vertical: moving
+  // the vertices up and down there changes nothing, because the wall still
+  // sits in the same place.
+  const spurs = fbm(s * 0.0052 + side * 17.3, side * 4.7, 4, seed + 211);
+  const ribs = ridged(s * 0.012 + side * 6.5, side * 2.3, 3, seed + 223) - 0.5;
+  const bite = smoothstep(clamp((dist - 14) / 55, 0, 1)) * smoothstep(clamp((dist - 16) / 240, 0, 1));
+  const wallDist = Math.max(2, dist - (spurs * 34 + ribs * 12) * bite);
+
+  // The wall climbs over a couple of hundred metres instead of standing up
+  // like a cliff right beside the road: the ground stays usable, the face is
+  // wide enough for the mesh to hold its shape, and the light rakes across it
+  // instead of hitting one flat sheet.
+  const climb = 1 - Math.exp(-Math.pow(wallDist / 165, 1.55));
   const valley = wallHeight * climb;
 
   // The range on top of the walls: sharp ridged crests over broad shoulders.
   // It only starts well away from the road, so the valley floor stays open.
-  const away = smoothstep(clamp((dist - 16) / 55, 0, 1));
+  // The range has to grow out of the wall, not switch on behind it: a short
+  // ramp puts the whole height of the peaks into a few metres of ground and
+  // stands a cliff up beside the road.
+  const away = smoothstep(clamp((dist - 60) / 320, 0, 1));
   const ridge = ridged(x * 0.0011 + side * 2.7, s * 0.0011, 4, seed + 37);
   const peaks = Math.max(0, ridge - 0.16) * 380 * away;
   const ridge2 = ridged(x * 0.0034 + side * 5.1, s * 0.0034, 3, seed + 43);
@@ -285,15 +303,54 @@ export function terrainRelief(profile, s, lateral) {
   const basinDepth = Math.max(0, basinNoise - 0.08) * 130;
   const basin = -basinDepth * smoothstep(clamp((dist - 14) / 75, 0, 1));
 
+  // Buttresses: the spurs that run down the face of a valley wall. They are
+  // what keeps a mountainside from reading as one smooth ramp, so they grow
+  // from the foot of the wall outwards.
+  const buttress =
+    (ridged(s * 0.0085 + side * 4.3, x * 0.0016, 3, seed + 83) - 0.42) *
+    34 *
+    smoothstep(clamp((dist - 12) / 70, 0, 1));
+  // Gullies between the spurs, cut into the same slope.
+  const gully =
+    -Math.max(0, ridged(s * 0.017 + side * 7.1, x * 0.004, 2, seed + 97) - 0.55) *
+    16 *
+    smoothstep(clamp((dist - 8) / 40, 0, 1));
+
   // Mid scale relief: this is what makes the slopes read as land instead of
-  // a smooth ramp once the sun rakes across them.
-  const crags = fbm(x * 0.019, s * 0.019, 3, seed + 233) * 5.4 * away;
+  // a smooth ramp once the sun rakes across them. It has to be strong where
+  // the wall is, not only far away: the face beside the road is the part the
+  // player sees all the way along the drive.
+  const face = smoothstep(clamp((dist - 22) / 55, 0, 1));
+  const crags = fbm(x * 0.019, s * 0.019, 3, seed + 233) * 12 * Math.max(away, face * 0.7);
+  const ledges = (ridged(s * 0.04 + side * 3.3, x * 0.05, 2, seed + 251) - 0.4) * 7 * away;
+  // Bands and chutes on the face of the wall. These are the shapes that catch
+  // the light and tell the eye the mountainside is rock: without them the
+  // face is one smooth sheet of colour no matter how detailed the mesh is.
+  const chutes =
+    (ridged(s * 0.021 + side * 5.7, x * 0.028, 3, seed + 263) - 0.44) * 13 * face;
+  const bands = fbm(x * 0.05, s * 0.035, 3, seed + 271) * 5.5 * face;
   const rubble = fbm(x * 0.055, s * 0.055, 2, seed + 311) * 1.4 * smoothstep(clamp(dist / 30, 0, 1));
 
   // Fine bumps so the surface never reads as a smooth sheet.
   const detail = fbm(x * 0.085, s * 0.085, 2, seed + 131) * 0.85 * smoothstep(clamp(dist / 6, 0, 1));
 
-  return valley + peaks + peaks2 + peaks3 + shoulders + roll + basin + crags + rubble + detail;
+  return (
+    valley +
+    peaks +
+    peaks2 +
+    peaks3 +
+    shoulders +
+    roll +
+    basin +
+    buttress +
+    gully +
+    crags +
+    ledges +
+    chutes +
+    bands +
+    rubble +
+    detail
+  );
 }
 
 /**

@@ -25,9 +25,9 @@ export const PALETTES = {
     sunX: 0.72,
     sunY: 0.3,
     sunIntensity: 1.6,
-    hemiIntensity: 0.95,
-    fillIntensity: 0.28,
-    ambient: '#5d7392',
+    hemiIntensity: 1.75,
+    fillIntensity: 0.55,
+    ambient: '#8598ad',
     starAlpha: 0,
     exposure: 0.88,
     cloud: 0.7,
@@ -45,9 +45,9 @@ export const PALETTES = {
     sunX: 0.84,
     sunY: 0.12,
     sunIntensity: 2.5,
-    hemiIntensity: 0.85,
-    fillIntensity: 0.3,
-    ambient: '#7a5f6a',
+    hemiIntensity: 1.45,
+    fillIntensity: 0.5,
+    ambient: '#8a6f78',
     starAlpha: 0,
     exposure: 0.95,
     cloud: 0.75,
@@ -119,8 +119,9 @@ export function mixInto(a, b, t, out) {
  * @param {number} patch noise in 0..1
  * @param {number} [rockPatch] noise in 0..1, where the rock breaks through
  * @param {number[]} out rgb in 0..1
+ * @param {number} [mottle] 0..1 fine noise, so a rock face is not one flat grey
  */
-export function groundColour(slope, altitude, dist, patch, rockPatch, out) {
+export function groundColour(slope, altitude, dist, patch, rockPatch, out, mottle = 0.5) {
   if (rockPatch === undefined) {
     rockPatch = 0;
   }
@@ -153,19 +154,33 @@ export function groundColour(slope, altitude, dist, patch, rockPatch, out) {
   const shoulder = Math.max(0, Math.min(1, (2.6 - dist) / 2.2));
   mixInto(out, gravel, shoulder * 0.8 * (1 - slope * 0.5), out);
 
-  // Rock on the steep ground.
-  const rockAmount = Math.max(0, Math.min(1, (slope - 0.3) * 2.6));
+  // Rock on the steep ground. The turf gives up sooner than it used to, so a
+  // cliff face is rock instead of a grey-green sheet.
+  const rockAmount = Math.max(0, Math.min(1, (slope - 0.22) * 2.8));
   mixInto(out, rock, rockAmount, out);
-  mixInto(out, rockDark, Math.max(0, Math.min(1, (slope - 0.62) * 2.2)), out);
+  mixInto(out, rockDark, Math.max(0, Math.min(1, (slope - 0.5) * 2.4)), out);
 
   // Outcrops: the mountain breaks through the turf in patches, which is what
   // makes a slope read as rock instead of as a green ramp.
-  const outcrop = Math.max(0, Math.min(1, (rockPatch - 0.48) * 3.6)) * Math.min(1, altitude / 22);
-  mixInto(out, rock, outcrop * 0.9, out);
-  // Horizontal strata break the cliffs up into layers of rock.
-  const strata = 0.5 + 0.5 * Math.sin(altitude * 0.32 + rockPatch * 7);
-  mixInto(out, rockDark, outcrop * 0.5 * strata, out);
-  mixInto(out, scree, outcrop * 0.28 * (1 - strata), out);
+  const outcrop = Math.max(0, Math.min(1, (rockPatch - 0.42) * 3.2)) * Math.min(1, altitude / 18);
+  mixInto(out, rock, outcrop * 0.95, out);
+  // Horizontal strata break the cliffs up into layers of rock. The bands are
+  // stretched vertically and driven by the patch noise as well, so they read
+  // as geology rather than as a sine wave.
+  const strata = 0.5 + 0.5 * Math.sin(altitude * 0.16 + rockPatch * 9.5);
+  const grit = 0.5 + 0.5 * Math.sin(altitude * 0.9 + rockPatch * 23);
+  mixInto(out, rockDark, outcrop * 0.62 * strata, out);
+  mixInto(out, rockDark, rockAmount * 0.3 * (1 - strata) * grit, out);
+  mixInto(out, scree, outcrop * 0.3 * (1 - strata), out);
+  mixInto(out, rock, rockAmount * 0.25 * grit, out);
+
+  // Speckle. A mountainside is never one colour: it is a mosaic of bare rock,
+  // dark rock in the cracks and pale scree, a few metres across, and the fine
+  // noise is what puts that mosaic on the face instead of a flat wash.
+  const speckle = Math.max(0, mottle - 0.35) * 1.5;
+  mixInto(out, rockDark, Math.min(0.75, speckle) * Math.max(rockAmount, outcrop) * 0.85, out);
+  mixInto(out, scree, Math.max(0, mottle - 0.66) * 1.9 * Math.max(rockAmount, outcrop) * 0.8, out);
+  mixInto(out, grassDark, Math.max(0, 0.35 - mottle) * 1.4 * (1 - rockAmount) * (1 - outcrop) * 0.7, out);
 
   const screeAmount = Math.max(0, Math.min(1, (altitude - 90) / 140)) * (1 - rockAmount * 0.4);
   mixInto(out, scree, screeAmount * 0.45, out);

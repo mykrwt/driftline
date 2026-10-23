@@ -15,7 +15,7 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
-import { roadOffset, roadHalfWidth, roadHeight, surfaceHeight } from './road.js';
+import { roadOffset, roadHalfWidth, roadHeight, surfaceHeight, surfaceNormal } from './road.js';
 import { groundColour } from './palette.js';
 import { WATER_DROP } from './water.js';
 import { fbm } from './noise.js';
@@ -35,8 +35,23 @@ export const TERRAIN_AHEAD = 6;
  * silhouette.
  */
 export const TERRAIN_COLUMNS = [
-  0, 2.2, 5, 9, 14, 20, 28, 38, 50, 65, 84, 104, 126, 150, 176, 205, 236, 270, 306, 345, 388, 434, 484, 538, 596, 658, 725, 800, 880, 965,
+  // The verge: fine enough that the ditch and the shoulder read as shapes.
+  0, 2.2, 5, 8, 12, 17, 23,
+  // The face of the valley wall. This is the band the player looks at all
+  // the way along the drive, and the land climbs most of its height in here:
+  // a coarse grid turns that climb into one stretched quad with one flat
+  // normal, which is exactly what makes a mountain look like a sheet.
+  30, 35, 40, 45.5, 51, 57, 63, 69, 75, 81.5, 88, 95, 102, 109, 116, 124,
+  132, 140, 149, 158, 167, 177, 187, 198, 209, 221, 234, 247, 261, 276, 292,
+  // The mountain itself, getting coarser with distance.
+  309, 327, 346, 367, 389, 412, 437, 464, 493, 524, 557, 592, 630, 671, 715,
+  762, 812, 866, 924, 986, 1052, 1123,
+  // The far columns reach well past the fog, so the edge of the mesh is never
+  // visible as a straight cut against the sky.
+  1200, 1283, 1373, 1470, 1575, 1688, 1810, 1941, 2082, 2234, 2398,
 ];
+/** Columns on each side of the road. */
+const SIDE_COLUMNS = TERRAIN_COLUMNS.length;
 /** Row spacing (metres) for the chunks close to the player. */
 const ROW_NEAR = 5;
 /** Row spacing for the middle distance. */
@@ -119,7 +134,8 @@ export function createTerrainManager(options) {
     // chunks tear apart where the level of detail changes.
     const rows = Math.max(2, Math.round(TERRAIN_CHUNK_LENGTH / wanted)) + 1;
     const step = TERRAIN_CHUNK_LENGTH / (rows - 1);
-    const columns = TERRAIN_COLUMNS.length * 2 - 1; // mirrored around the road
+    // One column per distance on each side of the road.
+    const columns = SIDE_COLUMNS * 2;
 
     const positions = new Float32Array(rows * columns * 3);
     const normals = new Float32Array(rows * columns * 3);
@@ -140,10 +156,13 @@ export function createTerrainManager(options) {
       const half = roadHalfWidth(profile, s);
       centres[r] = centre;
       for (let c = 0; c < columns; c++) {
-        // Column 0 is the left road edge, the last one the right road edge.
-        const k = c - (columns - 1) / 2;
-        const base = TERRAIN_COLUMNS[Math.abs(k)];
-        const lateral = k < 0 ? -(base + half) : base + half;
+        // Two strips, one on each side of the road, both ending exactly on
+        // the tarmac edge. The road itself is covered by the road mesh: a
+        // strip that ran across it would bridge the two verges with one long
+        // quad and slice through the tarmac on every banked corner.
+        const onLeft = c < SIDE_COLUMNS;
+        const base = TERRAIN_COLUMNS[onLeft ? SIDE_COLUMNS - 1 - c : c - SIDE_COLUMNS];
+        const lateral = (onLeft ? -1 : 1) * (base + half);
         laterals[r * columns + c] = lateral;
         heights[r * columns + c] = surfaceHeight(profile, centre + lateral, s);
       }
@@ -157,6 +176,19 @@ export function createTerrainManager(options) {
       for (let c = 0; c < columns; c++) {
         const i = r * columns + c;
         const lateral = laterals[i];
+        // A hollow is darker than a spur: the grid curvature, scaled to a
+        // slope, tells the two apart without another noise lookup.
+        const cPrevI = r * columns + Math.max(0, c - 1);
+        const cNextI = r * columns + Math.min(columns - 1, c + 1);
+        const rPrevI = Math.max(0, r - 1) * columns + c;
+        const rNextI = Math.min(rows - 1, r + 1) * columns + c;
+        const acrossSpan = Math.max(0.001, Math.abs(laterals[cNextI] - laterals[cPrevI]));
+        const alongSpan = Math.max(0.001, (Math.min(rows - 1, r + 1) - Math.max(0, r - 1)) * step);
+        const acrossCurve =
+          (heights[cPrevI] + heights[cNextI] - 2 * heights[i]) / (acrossSpan * acrossSpan * 0.25);
+        const alongCurve =
+          (heights[rPrevI] + heights[rNextI] - 2 * heights[i]) / (alongSpan * alongSpan * 0.25);
+        const crease = (acrossCurve + alongCurve) * 12;
         const x = centre + lateral;
         const y = heights[i];
         const index = i * 3;
@@ -184,8 +216,8 @@ export function createTerrainManager(options) {
         normals[index + 2] = nz / length;
 
         const uvIndex = i * 2;
-        uvs[uvIndex] = lateral / 8;
-        uvs[uvIndex + 1] = s / 8;
+        uvs[uvIndex] = lateral / 5;
+        uvs[uvIndex + 1] = s / 5;
 
         // Colour from the slope and the altitude.
         const slope = Math.min(1, Math.hypot(nx, nz) / Math.max(0.001, ny) / 1.9);
@@ -193,18 +225,29 @@ export function createTerrainManager(options) {
         const dist = Math.abs(lateral) - roadHalfWidth(profile, s);
         const patch = fbm(x * 0.013, s * 0.013, 3, seed + 17) * 0.5 + 0.5;
         const rockPatch = fbm(x * 0.011, s * 0.011, 3, seed + 61) * 0.5 + 0.5;
-        groundColour(slope, altitude, dist, patch, rockPatch, colour);
-        colors[index] = colour[0];
-        colors[index + 1] = colour[1];
-        colors[index + 2] = colour[2];
+        const mottle = fbm(x * 0.07, s * 0.07, 2, seed + 89) * 0.5 + 0.5;
+        groundColour(slope, altitude, dist, patch, rockPatch, colour, mottle);
+        // The cracks in the face are darker than the rock around them. The
+        // curvature of the height grid gives that for free: a hollow collects
+        // shadow, a spur catches the sun.
+        const shade = 1 + Math.max(-0.45, Math.min(0.45, crease)) * 0.55;
+        colors[index] = colour[0] * shade;
+        colors[index + 1] = colour[1] * shade;
+        colors[index + 2] = colour[2] * shade;
       }
     }
 
+    // The two strips are meshed separately: the last column of the left strip
+    // and the first column of the right strip are the two road edges, and the
+    // tarmac between them is the road mesh.
     for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < columns - 1; c++) {
-        const a = r * columns + c;
-        const b = (r + 1) * columns + c;
-        indices.push(a, b, a + 1, b, b + 1, a + 1);
+      for (let side = 0; side < 2; side++) {
+        const first = side * SIDE_COLUMNS;
+        for (let c = first; c < first + SIDE_COLUMNS - 1; c++) {
+          const a = r * columns + c;
+          const b = (r + 1) * columns + c;
+          indices.push(a, b, a + 1, b, b + 1, a + 1);
+        }
       }
     }
 
@@ -223,7 +266,7 @@ export function createTerrainManager(options) {
 
     // The lakes: the same ribbon, but below the ground, so only the parts
     // that are actually under water are drawn.
-    const water = buildWater(startS, rows, step, heights, laterals, centres);
+    const water = buildWater(startS, rows, step);
     if (water) group.add(water);
 
     addScenery(group, index, startS, rows, step);
@@ -235,46 +278,60 @@ export function createTerrainManager(options) {
   /**
    * Build the water surface of a chunk.
    *
-   * The surface sits a fixed distance below the road, so the low parts of
-   * the valley fill up and the road never gets flooded.
+   * The surface sits a fixed distance below the road, so the low parts of the
+   * valley fill up and the road never gets flooded.
+   *
+   * It has a grid of its own instead of reusing the terrain columns: the
+   * terrain is deliberately coarse far from the road, and a lake surface
+   * stretched over one of those 200 metre cells hangs in the air across the
+   * mountainside it is supposed to be hiding in. The water samples the land
+   * every few metres, so its shore follows the real shoreline, and it stops
+   * a few hundred metres out, where a lake can no longer be.
    *
    * @param {number} startS
    * @param {number} rows
    * @param {number} step
-   * @param {Float32Array} heights
-   * @param {Float32Array} laterals
-   * @param {Float32Array} centres
    * @returns {THREE.Mesh | null}
    */
-  function buildWater(startS, rows, step, heights, laterals, centres) {
+  function buildWater(startS, rows, step) {
     if (!options.waterMaterial) return null;
-    const columns = TERRAIN_COLUMNS.length * 2 - 1;
-    const limit = columns;
+    // A lake lives in the valley floor, close to the road. Further out the
+    // land has climbed into the mountains and there is nothing to fill.
+    // Only the ground close to the road is fine enough for a clean
+    // shoreline; further out the land has climbed away from the water anyway.
+    const REACH = 150;
+    // Fine enough that the shore is a shoreline and not a staircase.
+    const SPACING = 4;
+    const columns = Math.ceil((REACH * 2) / SPACING) + 1;
+    // The water is cheaper than the land, so it follows the road more finely
+    // than the coarse chunks behind and ahead of the player.
+    const waterStep = Math.min(step, 8);
+    const waterRows = Math.max(2, Math.round((rows - 1) * step / waterStep)) + 1;
+
     const positions = [];
     const depths = [];
     const indices = [];
     let any = false;
 
-    for (let r = 0; r < rows; r++) {
-      const s = startS + r * step;
-      const centre = centres[r];
+    for (let r = 0; r < waterRows; r++) {
+      const s = startS + r * waterStep;
+      const centre = roadOffset(profile, s);
       const level = roadHeight(profile, s) - WATER_DROP;
-      for (let c = 0; c < limit; c++) {
-        const i = r * columns + c;
-        const lateral = laterals[i];
-        const ground = heights[i];
+      for (let c = 0; c < columns; c++) {
+        const lateral = -REACH + c * SPACING;
+        const ground = surfaceHeight(profile, centre + lateral, s);
         const depth = level - ground;
-        if (depth > 0.05) any = true;
+        if (depth > 0.02) any = true;
         positions.push(centre + lateral, level, s);
         depths.push(depth);
       }
     }
     if (!any) return null;
 
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < limit - 1; c++) {
-        const a = r * limit + c;
-        const b = (r + 1) * limit + c;
+    for (let r = 0; r < waterRows - 1; r++) {
+      for (let c = 0; c < columns - 1; c++) {
+        const a = r * columns + c;
+        const b = (r + 1) * columns + c;
         indices.push(a, b, a + 1, b, b + 1, a + 1);
       }
     }
@@ -292,51 +349,103 @@ export function createTerrainManager(options) {
   }
 
   /**
-   * The height of the ribbon mesh at a point.
+   * The cell of the ribbon mesh that is drawn at a point.
    *
-   * The mesh is a grid: the ground between two columns and between two rows
-   * is a straight line, while the real terrain is not. A prop that is placed
-   * on the real terrain can therefore float above the mesh or sink into it.
-   * This interpolates exactly the way the mesh does.
+   * The mesh is a grid, and the ground between two columns and two rows is a
+   * flat quad - two triangles, actually - while the real land is not. A prop
+   * that is placed on the analytic height can therefore float above the mesh
+   * or sink into it, and on a mountain the difference is metres. This returns
+   * the four corners of the quad that is really drawn there.
+   *
+   * @param {number} s
+   * @param {number} lateral
+   * @returns {{ height: number, floor: number, spread: number }}
+   */
+  function meshCell(s, lateral) {
+    const chunk = Math.floor(s / TERRAIN_CHUNK_LENGTH);
+    const startS = chunk * TERRAIN_CHUNK_LENGTH;
+    const wanted = rowStep(Math.abs(chunk - currentChunk));
+    const rows = Math.max(2, Math.round(TERRAIN_CHUNK_LENGTH / wanted)) + 1;
+    const step = TERRAIN_CHUNK_LENGTH / (rows - 1);
+
+    const rowF = Math.min(rows - 1.0001, Math.max(0, (s - startS) / step));
+    const r0 = Math.floor(rowF);
+    const r1 = Math.min(rows - 1, r0 + 1);
+    const t = rowF - r0;
+
+    const half = roadHalfWidth(profile, s);
+    const side = lateral < 0 ? -1 : 1;
+    const distance = Math.abs(lateral) - half;
+    const columns = TERRAIN_COLUMNS;
+    let index = 0;
+    while (index < columns.length - 2 && columns[index + 1] < distance) index++;
+    const span = Math.max(0.001, columns[index + 1] - columns[index]);
+    const u = distance <= 0 ? 0 : Math.min(1, Math.max(0, (distance - columns[index]) / span));
+
+    /**
+     * @param {number} rowIndex
+     * @param {number} columnIndex
+     * @returns {number}
+     */
+    const corner = (rowIndex, columnIndex) => {
+      const cs = startS + rowIndex * step;
+      const centre = roadOffset(profile, cs);
+      const halfWidth = roadHalfWidth(profile, cs);
+      const base = columns[Math.min(columns.length - 1, columnIndex)];
+      return surfaceHeight(profile, centre + side * (base + halfWidth), cs);
+    };
+
+    const h00 = corner(r0, index);
+    const h01 = corner(r0, index + 1);
+    const h10 = corner(r1, index);
+    const h11 = corner(r1, index + 1);
+    const low = h00 + (h01 - h00) * u;
+    const high = h10 + (h11 - h10) * u;
+    const floor = Math.min(h00, h01, h10, h11);
+    const spread = Math.max(h00, h01, h10, h11) - floor;
+    return { height: low + (high - low) * t, floor, spread };
+  }
+
+  /**
+   * The height of the ribbon mesh at a point, the way the mesh is drawn.
    *
    * @param {number} s
    * @param {number} lateral
    * @returns {number}
    */
   function ribbonHeight(s, lateral) {
-    const chunk = Math.floor(s / TERRAIN_CHUNK_LENGTH);
-    const startS = chunk * TERRAIN_CHUNK_LENGTH;
-    const wanted = rowStep(Math.abs(chunk - currentChunk));
-    const rows = Math.max(2, Math.round(TERRAIN_CHUNK_LENGTH / wanted)) + 1;
-    const step = TERRAIN_CHUNK_LENGTH / (rows - 1);
-    const row = (s - startS) / step;
-    const r0 = Math.floor(row);
-    const t = row - r0;
-    const low = columnHeight(startS + r0 * step, lateral);
-    const high = columnHeight(startS + Math.min(rows - 1, r0 + 1) * step, lateral);
-    return low + (high - low) * t;
+    return meshCell(s, lateral).height;
   }
 
   /**
-   * The height of one column of the ribbon, interpolated sideways.
+   * The lowest point of the mesh under a prop's footprint.
+   *
+   * A prop that is placed on the centre point of a slope still floats over
+   * the downhill side of it, so the ground is sampled around the base and
+   * the lowest of those samples wins.
+   *
    * @param {number} s
    * @param {number} lateral
-   * @returns {number}
+   * @param {number} spread metres
    */
-  function columnHeight(s, lateral) {
-    const centre = roadOffset(profile, s);
-    const half = roadHalfWidth(profile, s);
-    const distance = Math.abs(lateral) - half;
-    if (distance <= 0) return surfaceHeight(profile, centre + lateral, s);
-    const columns = TERRAIN_COLUMNS;
-    let index = 0;
-    while (index < columns.length - 2 && columns[index + 1] < distance) index++;
-    const span = Math.max(0.001, columns[index + 1] - columns[index]);
-    const mix = Math.min(1, Math.max(0, (distance - columns[index]) / span));
-    const sign = lateral < 0 ? -1 : 1;
-    const low = surfaceHeight(profile, centre + sign * (columns[index] + half), s);
-    const high = surfaceHeight(profile, centre + sign * (columns[index + 1] + half), s);
-    return low + (high - low) * mix;
+  function baseHeight(s, lateral, spread) {
+    const cell = meshCell(s, lateral);
+    let y = Math.min(cell.height, cell.floor);
+    y = Math.min(y, ribbonHeight(s, lateral - spread), ribbonHeight(s, lateral + spread));
+    y = Math.min(y, ribbonHeight(s - spread, lateral), ribbonHeight(s + spread, lateral));
+    return y;
+  }
+
+  /**
+   * How steep the mesh is around a point.
+   * @param {number} s
+   * @param {number} lateral
+   * @param {number} metres
+   */
+  function meshSlope(s, lateral, metres) {
+    const across = ribbonHeight(s, lateral + metres) - ribbonHeight(s, lateral - metres);
+    const along = ribbonHeight(s + metres, lateral) - ribbonHeight(s - metres, lateral);
+    return Math.hypot(across, along) / (metres * 2);
   }
 
   /**
@@ -370,11 +479,38 @@ export function createTerrainManager(options) {
      * @param {number} rotation
      * @param {number} scale
      */
-    const place = (key, x, y, z, rotation, scale) => {
+    const upAxis = new THREE.Vector3(0, 1, 0);
+    const tiltAxis = new THREE.Vector3();
+    const tilt = new THREE.Quaternion();
+    const yaw = new THREE.Quaternion();
+    const tilted = new THREE.Quaternion();
+
+    /**
+     * @param {string} key
+     * @param {number} x
+     * @param {number} y
+     * @param {number} z
+     * @param {number} rotation yaw, radians
+     * @param {number} scale
+     * @param {number} [sink] how deep the base is pushed into the ground
+     * @param {number} [lean] 0 = upright, 1 = lying flat on the slope
+     */
+    const place = (key, x, y, z, rotation, scale, sink = 0.25, lean = 0) => {
       const asset = assets.prop?.(key);
       if (!asset) return;
-      dummy.position.set(x, y - 0.25, z);
-      dummy.rotation.set(0, rotation, 0);
+      dummy.position.set(x, y - sink, z);
+      if (lean > 0.02) {
+        // A boulder on a cliff leans into the rock face instead of standing
+        // on end and hanging half out of it.
+        surfaceNormal(profile, x, z, tiltAxis);
+        tilt.setFromUnitVectors(upAxis, tiltAxis.normalize());
+        yaw.setFromAxisAngle(upAxis, rotation);
+        tilted.copy(tilt).multiply(yaw);
+        dummy.quaternion.copy(yaw).slerp(tilted, Math.min(1, lean));
+      } else {
+        dummy.quaternion.identity();
+        dummy.rotation.set(0, rotation, 0);
+      }
       dummy.scale.setScalar(scale);
       dummy.updateMatrix();
       if (!buckets.has(key)) buckets.set(key, { asset, matrices: [] });
@@ -389,12 +525,12 @@ export function createTerrainManager(options) {
      * @param {number} rotation
      * @param {number} scale
      */
-    const placeTree = (key, x, y, z, rotation, scale) => {
+    const placeTree = (key, x, y, z, rotation, scale, sink = 0.3) => {
       const impostor = options.getImpostor?.(key);
       if (!impostor) return;
-      // The trees are sunk into the ground a little, so they do not float
-      // above it on a slope.
-      dummy.position.set(x, y - 0.45, z);
+      // The billboards are upright, so on a slope the base of the quad has to
+      // be pushed further into the ground or the trunk hangs in the air.
+      dummy.position.set(x, y - sink, z);
       dummy.rotation.set(0, rotation, 0);
       dummy.scale.setScalar(scale);
       dummy.updateMatrix();
@@ -413,23 +549,48 @@ export function createTerrainManager(options) {
       const distance =
         spread < 0.5
           ? half + 3 + random() * 30
-          : half + 30 + Math.pow(random(), 0.7) * 380;
+          : half + 30 + Math.pow(random(), 0.7) * 650;
       const x = centre + side * distance;
       const z = s;
-      // The props stand on the mesh, not on the real terrain.
-      const y = ribbonHeight(s, side * (distance + half));
+      // The props stand on the mesh, not on the real terrain: the mesh is a
+      // grid and the land between two of its columns is a straight line, so
+      // the analytic height and the drawn height are not the same thing.
+      //
+      // `distance` is already measured from the centre line, so it is the
+      // lateral offset itself - adding the half width again here used to put
+      // every prop on the wrong column, which is what made rocks and trees
+      // hang in the air above the cliffs.
+      const lateral = side * distance;
+      const cell = meshCell(s, lateral);
+      const y = baseHeight(s, lateral, 1.4);
       const altitude = y - roadHeight(profile, s);
+      const slope = meshSlope(s, lateral, 3);
+      // The quad is flat, but its corners can still be tens of metres apart:
+      // that is a cliff, and no tree stands on a cliff.
+      const cliff = cell.spread > Math.max(2.5, distance * 0.05);
 
-      // The slope decides whether anything can grow here.
-      const hx = surfaceHeight(profile, x + 3, z) - surfaceHeight(profile, x - 3, z);
-      const hz = surfaceHeight(profile, x, z + 3) - surfaceHeight(profile, x, z - 3);
-      const slope = Math.hypot(hx, hz) / 6;
-
-      if (slope > 0.62 || altitude > 190) {
-        // Bare rock: only boulders and scree. A billboard on a steep slope
-        // would float above the ground, so nothing grows there.
-        if (random() < 0.4) {
-          place(random() < 0.5 ? 'rock' : 'rockSmall', x, y, z, random() * Math.PI * 2, 0.7 + random() * 0.9);
+      if (cliff || slope > 0.85 || altitude > 260) {
+        // Bare rock: only boulders and scree. Nothing grows on a cliff, and
+        // the boulders that do sit on it lean into the face.
+        if (random() < 0.45) {
+          const key = random() < 0.5 ? 'rock' : 'rockSmall';
+          place(
+            key,
+            x,
+            y,
+            z,
+            random() * Math.PI * 2,
+            0.32 + random() * 0.35,
+            0.3 + Math.min(0.5, slope * 0.3),
+            Math.min(0.6, 0.3 + slope * 0.35),
+          );
+        }
+        continue;
+      }
+      if (slope > 0.5) {
+        // A tree cannot stand on this, but a boulder can be wedged into it.
+        if (random() < 0.5) {
+          place('rock', x, y, z, random() * Math.PI * 2, 0.45 + random() * 0.4, 0.3, Math.min(0.6, slope * 0.7));
         }
         continue;
       }
@@ -442,7 +603,7 @@ export function createTerrainManager(options) {
 
       if (distance < half + 36) {
         if (kind < 0.46) {
-          placeTree(treeKey, x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.5);
+          placeTree(treeKey, x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.5, 0.3 + slope * 2.2);
         } else if (kind < 0.66) {
           placeTree(
             random() < 0.5 ? 'bushLarge' : 'bush',
@@ -451,27 +612,37 @@ export function createTerrainManager(options) {
             z,
             random() * Math.PI * 2,
             0.8 + random() * 0.7,
+            0.2 + slope * 0.9,
           );
         } else if (kind < 0.8) {
-          placeTree('bushSmall', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.6);
+          placeTree('bushSmall', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.6, 0.15 + slope * 0.6);
         } else if (kind < 0.9) {
-          place(random() < 0.5 ? 'rockSmall' : 'rockTall', x, y, z, random() * Math.PI * 2, 0.7 + random() * 0.8);
+          place(
+            random() < 0.5 ? 'rockSmall' : 'rockTall',
+            x,
+            y,
+            z,
+            random() * Math.PI * 2,
+            0.7 + random() * 0.8,
+            0.25 + slope * 0.6,
+            slope * 0.7,
+          );
         } else {
           // Tufts of grass along the verge.
-          placeTree('grass', x, y, z, random() * Math.PI * 2, 0.9 + random() * 0.8);
+          placeTree('grass', x, y, z, random() * Math.PI * 2, 0.9 + random() * 0.8, 0.1 + slope * 0.4);
         }
       } else {
         // Up in the mountains the forest thins out into pines and boulders.
         if (kind < 0.46) {
-          placeTree(treeKey, x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.6);
+          placeTree(treeKey, x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.6, 0.3 + slope * 2.2);
         } else if (kind < 0.62) {
-          placeTree('treePineSlim', x, y, z, random() * Math.PI * 2, 0.7 + random() * 0.5);
+          placeTree('treePineSlim', x, y, z, random() * Math.PI * 2, 0.7 + random() * 0.5, 0.3 + slope * 1.8);
         } else if (kind < 0.78) {
-          place(random() < 0.5 ? 'rock' : 'rockTall', x, y, z, random() * Math.PI * 2, 0.9 + random() * 1.1);
+          place(random() < 0.5 ? 'rock' : 'rockTall', x, y, z, random() * Math.PI * 2, 0.9 + random() * 1.1, 0.3 + slope * 0.7, slope);
         } else if (kind < 0.9) {
-          place('rockSmall', x, y, z, random() * Math.PI * 2, 0.8 + random() * 1.0);
+          place('rockSmall', x, y, z, random() * Math.PI * 2, 0.8 + random() * 1.0, 0.25 + slope * 0.6, slope);
         } else {
-          place('stump', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.5);
+          place('stump', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.5, 0.2 + slope * 0.5);
         }
       }
     }
@@ -525,8 +696,11 @@ export function createTerrainManager(options) {
       }
       mesh.instanceColor.needsUpdate = true;
       mesh.computeBoundingSphere();
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      // A crossed billboard throws a shadow of its own quads, not of a tree:
+      // the sun rakes across the road in stripes. The far forest does not
+      // need to cast, and it does not receive either.
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
       group.add(mesh);
     }
   }
@@ -579,6 +753,15 @@ export function createTerrainManager(options) {
      */
     sampleHeight(s, lateral) {
       return ribbonHeight(s, lateral);
+    },
+    /**
+     * The quad of the mesh that is drawn at a point: its height, the lowest
+     * of its four corners and how far apart those corners are.
+     * @param {number} s
+     * @param {number} lateral
+     */
+    sampleCell(s, lateral) {
+      return meshCell(s, lateral);
     },
     dispose() {
       for (const index of Array.from(chunks.keys())) releaseChunk(index);

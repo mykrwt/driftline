@@ -36,6 +36,13 @@ export function createWaterMaterial(palette) {
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
+    // The surface lies within a few centimetres of the land on the shallow
+    // shelf around a lake, and two coplanar surfaces fight for the depth
+    // buffer: the lake came out covered in fine stripes. Pulling the water
+    // towards the camera fixes that without moving the shoreline.
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -4,
     vertexShader: `
       attribute float aDepth;
       varying float vDepth;
@@ -72,29 +79,36 @@ export function createWaterMaterial(palette) {
       varying vec3 vView;
 
       void main() {
-        if (vDepth <= 0.02) discard;
+        // The shore is faded out instead of cut away. A hard cut on a grid
+        // leaves a sawtooth edge around the lake, and the triangles at the
+        // waterline show up as stripes across the whole surface.
+        float shore = smoothstep(0.0, 2.6, vDepth);
+        if (shore <= 0.001) discard;
 
-        // The normal comes from two crossing wave trains.
-        float dx = cos(vWorld.x * 0.35 + uTime * 1.1) * 0.05
-                 + cos((vWorld.x + vWorld.z) * 0.11 + uTime * 0.5) * 0.02;
-        float dz = cos(vWorld.z * 0.27 - uTime * 0.8) * 0.05
-                 + cos((vWorld.x + vWorld.z) * 0.11 + uTime * 0.5) * 0.02;
-        vec3 normal = normalize(vec3(-dx * 3.0, 1.0, -dz * 3.0));
+        // The normal comes from two crossing wave trains. They are gentle on
+        // purpose: a sharper set of waves is a moire pattern at a distance,
+        // not water.
+        float dx = cos(vWorld.x * 0.14 + uTime * 0.7) * 0.035
+                 + cos((vWorld.x + vWorld.z) * 0.05 + uTime * 0.35) * 0.015;
+        float dz = cos(vWorld.z * 0.11 - uTime * 0.5) * 0.035
+                 + cos((vWorld.x + vWorld.z) * 0.05 + uTime * 0.35) * 0.015;
+        vec3 normal = normalize(vec3(-dx * 1.6, 1.0, -dz * 1.6));
 
         vec3 viewDir = normalize(-vView);
         float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
 
         // The colour: shallow near the shore, deep in the middle.
         vec3 color = mix(uShallow, uDeep, smoothstep(0.0, 4.0, vDepth));
-        color = mix(color, uSky, clamp(fresnel * 0.85, 0.0, 0.8));
+        color = mix(color, uSky, clamp(fresnel * 0.75, 0.0, 0.6));
 
         // The sun on the water.
         vec3 halfDir = normalize(viewDir + uSunDirection);
-        float spec = pow(max(dot(normal, halfDir), 0.0), 90.0);
-        color += uSun * spec * 1.4;
+        float spec = pow(max(dot(normal, halfDir), 0.0), 60.0);
+        color += uSun * spec * 0.9;
 
-        float alpha = mix(0.55, 0.94, smoothstep(0.0, 2.5, vDepth));
+        float alpha = mix(0.5, 0.92, smoothstep(0.0, 2.5, vDepth));
         alpha = max(alpha, fresnel * 0.9);
+        alpha *= shore;
 
         // The fog, so the far end of the lake melts into the horizon.
         float distance = length(vView);

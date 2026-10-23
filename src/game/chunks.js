@@ -10,7 +10,6 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import {
   SEGMENT_LENGTH,
-  ROAD_LIFT,
   roadOffset,
   roadHeight,
   roadHalfWidth,
@@ -51,33 +50,77 @@ function chunkRandom(index, seed) {
  * @param {THREE.BufferGeometry} geometry
  */
 function buildRoadGeometry(profile, startS, endS, geometry) {
-  const columns = 5;
+  // The tarmac is banked exactly like the corridor the physics uses, so the
+  // tyres are always on the surface that is drawn. A handful of columns
+  // carries the cross slope and gives the hills a normal to light.
+  const columns = 9;
   const rows = endS - startS + 1;
   const positions = new Float32Array(rows * columns * 3);
   const normals = new Float32Array(rows * columns * 3);
   const uvs = new Float32Array(rows * columns * 2);
   const indices = [];
+  // The tarmac overlaps the edge of the terrain by a hand's width, so the
+  // two meshes can never open a hairline crack on a tight corner, but the
+  // painted edge line still lands exactly on the edge of the road.
+  const OVERLAP = 0.12;
 
   for (let r = 0; r < rows; r++) {
     const s = startS + r;
     const centre = roadOffset(profile, s);
-    const y = roadHeight(profile, s) + ROAD_LIFT;
-    const half = roadHalfWidth(profile, s);
+    const roadHalf = roadHalfWidth(profile, s);
+    const half = roadHalf + OVERLAP;
     for (let c = 0; c < columns; c++) {
-      const u = c / (columns - 1);
-      const lateral = (u - 0.5) * 2 * half;
+      const t = c / (columns - 1);
+      const lateral = (t - 0.5) * 2 * half;
       const index = (r * columns + c) * 3;
       positions[index] = centre + lateral;
-      positions[index + 1] = y;
+      // The same height the physics uses, banking and all.
+      positions[index + 1] = surfaceHeight(profile, centre + lateral, s);
       positions[index + 2] = s;
-      normals[index] = 0;
-      normals[index + 1] = 1;
-      normals[index + 2] = 0;
       const uvIndex = (r * columns + c) * 2;
-      uvs[uvIndex] = u;
+      // The texture is mapped to the real width of the road, so the edge
+      // lines stay on the edge however wide the drift areas get.
+      uvs[uvIndex] = 0.5 + lateral / (2 * roadHalf);
       uvs[uvIndex + 1] = s / 12;
     }
   }
+
+  // Normals from the grid, so the tarmac darkens on a hill and in a bank.
+  for (let r = 0; r < rows; r++) {
+    const rPrev = Math.max(0, r - 1);
+    const rNext = Math.min(rows - 1, r + 1);
+    const dz = (rNext - rPrev) || 1;
+    for (let c = 0; c < columns; c++) {
+      const cPrev = Math.max(0, c - 1);
+      const cNext = Math.min(columns - 1, c + 1);
+      const i = (r * columns + c) * 3;
+      const iPrev = (r * columns + cPrev) * 3;
+      const iNext = (r * columns + cNext) * 3;
+      const iRow = (rPrev * columns + c) * 3;
+      const iRowNext = (rNext * columns + c) * 3;
+      const tx = positions[iNext] - positions[iPrev];
+      const ty = positions[iNext + 1] - positions[iPrev + 1];
+      const tz = positions[iNext + 2] - positions[iPrev + 2];
+      const sx = positions[iRowNext] - positions[iRow];
+      const sy = positions[iRowNext + 1] - positions[iRow + 1];
+      const sz = positions[iRowNext + 2] - positions[iRow + 2];
+      // cross(along, across)
+      let nx = sy * tz - sz * ty;
+      let ny = sz * tx - sx * tz;
+      let nz = sx * ty - sy * tx;
+      if (ny < 0) {
+        nx = -nx;
+        ny = -ny;
+        nz = -nz;
+      }
+      const length = Math.hypot(nx, ny, nz) || 1;
+      normals[i] = nx / length;
+      normals[i + 1] = ny / length;
+      normals[i + 2] = nz / length;
+      void dz;
+    }
+  }
+
   for (let r = 0; r < rows - 1; r++) {
     for (let c = 0; c < columns - 1; c++) {
       const a = r * columns + c;
@@ -125,6 +168,51 @@ export function createImpostorGeometry(width, height) {
  */
 export function createChunkManager(options) {
   const { profile, scene, assets, seed } = options;
+  /**
+   * The height of the ground as it is drawn.
+   *
+   * The ribbon is a grid, so the surface under a prop is a straight line
+   * between two columns and not the analytic height of the land. Road
+   * furniture is placed against the mesh, and against the lowest point of
+   * its footprint, so nothing hovers over the verge.
+   *
+   * @param {number} s
+   * @param {number} lateral
+   * @param {number} [spread]
+   * @returns {number}
+   */
+  function vergeHeight(s, lateral, spread = 0.7) {
+    const sample = options.groundHeight;
+    const cell = options.groundCell?.(s, lateral);
+    if (!sample) {
+      const y = surfaceHeight(profile, roadOffset(profile, s) + lateral, s);
+      return cell ? Math.min(y, cell.floor) : y;
+    }
+    let y = sample(s, lateral);
+    if (cell) y = Math.min(y, cell.floor);
+    y = Math.min(y, sample(s, lateral - spread), sample(s, lateral + spread));
+    y = Math.min(y, sample(s - spread, lateral), sample(s + spread, lateral));
+    return y;
+  }
+
+  /**
+   * Is this a place a prop can stand on?
+   *
+   * A quad of the terrain ribbon has four corners, and on a mountain those
+   * corners can be metres apart even though the quad itself is flat. A prop
+   * dropped on such a quad hangs over the downhill half of it, which is what
+   * made rocks and trees float above the cliffs.
+   *
+   * @param {number} s
+   * @param {number} lateral
+   * @param {number} tolerance how many metres the corners may differ by
+   * @returns {boolean}
+   */
+  function isStandable(s, lateral, tolerance) {
+    const cell = options.groundCell?.(s, lateral);
+    if (!cell) return true;
+    return cell.spread <= tolerance;
+  }
   /** @type {Map<number, { group: THREE.Group, meshes: THREE.Object3D[] }>} */
   const chunks = new Map();
 
@@ -182,20 +270,30 @@ export function createChunkManager(options) {
         const distance = half + 4 + random() * 40;
         const x = centre + side * distance;
         const z = s + (random() - 0.5) * SEGMENT_LENGTH;
-        const y = surfaceHeight(profile, x, z);
+        const lateral = x - roadOffset(profile, z);
+        const y = vergeHeight(z, lateral, 1.2) - 0.35;
         const kind = random();
-        if (kind < 0.6) place(random() < 0.5 ? 'tree' : 'treeOak', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.5);
-        else if (kind < 0.75) place('treePine', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.4);
-        else if (kind < 0.9) place('rock', x, y, z, random() * Math.PI * 2, 0.7 + random() * 0.8);
-        else place('bush', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.6);
+        // Trees need ground that is flat enough to stand on; only boulders
+        // are allowed to hug the steep faces.
+        // Only rocks are placed here. The trees and bushes along the road
+        // come from the terrain scatter, which draws them as billboards that
+        // are baked with their own light. A real model this close to the road
+        // sits in the shade of the mountains and reads as a black blob.
+        if (isStandable(z, lateral, 1.6)) {
+          place(random() < 0.5 ? 'rock' : 'rockSmall', x, y, z, random() * Math.PI * 2, 0.35 + random() * 0.4);
+        } else if (kind > 0.55) {
+          place('rock', x, y, z, random() * Math.PI * 2, 0.3 + random() * 0.35);
+        }
       }
       if (random() < 0.16) {
         const side = random() < 0.5 ? -1 : 1;
         const distance = half + 3 + random() * 10;
         const x = centre + side * distance;
         const z = s;
-        const y = surfaceHeight(profile, x, z);
-        place(random() < 0.5 ? 'bush' : 'bushSmall', x, y, z, random() * Math.PI * 2, 0.8 + random() * 0.5);
+        const lateral = x - roadOffset(profile, z);
+        if (!isStandable(z, lateral, 1.2)) continue;
+        const y = vergeHeight(z, lateral, 1) - 0.2;
+        place('rockSmall', x, y, z, random() * Math.PI * 2, 0.3 + random() * 0.3);
       }
 
       // Guard rails where the ground falls away from the road: they make
@@ -204,11 +302,10 @@ export function createChunkManager(options) {
       if (i % 2 === 0) {
         const heading = roadHeading(profile, s);
         for (const side of [-1, 1]) {
-          const edgeX = centre + side * (half + 1.1);
-          const outsideY = surfaceHeight(profile, centre + side * (half + 6), s);
+          const lateral = side * (half + 1.1);
+          const outsideY = vergeHeight(s, side * (half + 6), 1);
           if (roadY - outsideY < 1.1) continue;
-          const y = surfaceHeight(profile, edgeX, s);
-          place('rail', edgeX, y, s, heading, 1);
+          place('rail', centre + lateral, vergeHeight(s, lateral), s, heading, 1);
         }
       }
 
@@ -220,15 +317,14 @@ export function createChunkManager(options) {
           const distance = half * (0.55 + random() * 0.4);
           const x = centre + side * distance;
           const z = s + (random() - 0.5) * SEGMENT_LENGTH;
+          // On the tarmac the surface is the road itself, banked.
           const y = surfaceHeight(profile, x, z);
           place('cone', x, y, z, heading, 0.9 + random() * 0.2);
         }
         if (random() < 0.18) {
           const side = random() < 0.5 ? -1 : 1;
-          const x = centre + side * (half + 1.2);
-          const z = s;
-          const y = surfaceHeight(profile, x, z);
-          place('barrier', x, y, z, heading, 1);
+          const lateral = side * (half + 1.2);
+          place('barrier', centre + lateral, vergeHeight(s, lateral), s, heading, 1);
         }
       }
 
@@ -236,20 +332,30 @@ export function createChunkManager(options) {
       // over the road, so the lamp is turned to face the tarmac.
       if (i % 7 === 0) {
         const side = random() < 0.5 ? -1 : 1;
-        const x = centre + side * (half + 1.6);
-        const z = s;
-        const y = surfaceHeight(profile, x, z);
-        place('lightPost', x, y, z, roadHeading(profile, s) - (side * Math.PI) / 2, 1);
+        const lateral = side * (half + 1.6);
+        place(
+          'lightPost',
+          centre + lateral,
+          vergeHeight(s, lateral),
+          s,
+          roadHeading(profile, s) - (side * Math.PI) / 2,
+          1,
+        );
       }
 
       // A sign every few hundred metres, so the speed is readable. The
       // plate stands across the road and faces the driver.
       if (s > 0 && s % 400 < SEGMENT_LENGTH) {
         const side = random() < 0.5 ? -1 : 1;
-        const x = centre + side * (half + 2.2);
-        const z = s;
-        const y = surfaceHeight(profile, x, z);
-        place('sign', x, y, z, roadHeading(profile, s) + (side > 0 ? Math.PI : 0), 1);
+        const lateral = side * (half + 2.2);
+        place(
+          'sign',
+          centre + lateral,
+          vergeHeight(s, lateral, 0.5),
+          s,
+          roadHeading(profile, s) + (side > 0 ? Math.PI : 0),
+          1,
+        );
       }
     }
 

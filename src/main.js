@@ -195,6 +195,9 @@ function startRace(config) {
 
   menus.hideAll();
   hud.show();
+  // A menu button that still has the focus would eat Space and Enter, which
+  // are the handbrake and the confirm key once the race starts.
+  /** @type {any} */ (doc.activeElement)?.blur?.();
   input.setEnabled(true);
   phase = 'racing';
   updateOrientationHint();

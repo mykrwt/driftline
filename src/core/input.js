@@ -8,6 +8,17 @@
  *   brake    0..1
  *   handbrake boolean
  *   boost    boolean
+ *
+ * Three rules keep the controls predictable:
+ *
+ *   - keys are only collected while the game is enabled, and never while the
+ *     player is typing in a text field, so a text box can never drive the car;
+ *   - the analogue sources (touch, tilt, pad) are merged by strength instead
+ *     of by priority, so a resting pad or a phone held at a slight angle can
+ *     never cancel a key that is actually held;
+ *   - a touch button stays down until its own pointer is released, even if
+ *     the finger slides off it, and every source is cleared when the window
+ *     loses focus, so nothing can get stuck on.
  */
 
 import { clamp } from './math.js';
@@ -40,6 +51,56 @@ const KEY_MAP = {
   KeyM: 'mute',
   Enter: 'confirm',
 };
+
+/**
+ * Fallback for browsers that hand out an empty or unusual `event.code`
+ * (some mobile keyboards and remote layouts do).
+ * @type {Record<string, string>}
+ */
+const KEY_FALLBACK = {
+  arrowup: 'up',
+  w: 'up',
+  arrowdown: 'down',
+  s: 'down',
+  arrowleft: 'left',
+  a: 'left',
+  arrowright: 'right',
+  d: 'right',
+  ' ': 'handbrake',
+  spacebar: 'handbrake',
+  shift: 'boost',
+  c: 'camera',
+  r: 'respawn',
+  escape: 'pause',
+  esc: 'pause',
+  p: 'pause',
+  m: 'mute',
+  enter: 'confirm',
+};
+
+/** The keys that only make sense while driving. */
+const DRIVING_ACTIONS = new Set(['up', 'down', 'left', 'right', 'handbrake', 'boost']);
+
+/**
+ * @param {KeyboardEvent} event
+ * @returns {string | null}
+ */
+function resolveAction(event) {
+  if (event.code && KEY_MAP[event.code]) return KEY_MAP[event.code];
+  const key = String(event.key || '').toLowerCase();
+  return KEY_FALLBACK[key] ?? null;
+}
+
+/**
+ * Is the event coming from something the player is typing into?
+ * @param {any} target
+ */
+function isEditable(target) {
+  if (!target || typeof target !== 'object') return false;
+  if (target.isContentEditable) return true;
+  const tag = String(target.tagName || '').toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
 
 /**
  * @typedef {object} InputOptions
@@ -80,14 +141,14 @@ export function createInput(options = {}) {
   let gamepadBrake = 0;
   let gamepadHandbrake = false;
   let gamepadBoost = false;
+  /** The keyboard steering, eased so it feels analogue. */
+  let keySteer = 0;
   let enabled = true;
   let invertSteer = options.invertSteer ?? false;
   let tiltEnabled = options.tiltEnabled ?? false;
   let tiltSensitivity = options.tiltSensitivity ?? 1;
-  /** @type {number | null} */
-  let steerPointer = null;
-  let steerOriginX = 0;
-  let steerHalfWidth = 100;
+  /** @type {Array<() => void>} */
+  const releases = [];
 
   /**
    * @param {string} event
@@ -115,117 +176,216 @@ export function createInput(options = {}) {
     }
   }
 
+  /** Drop every held control. */
+  function clearAll() {
+    for (const key of Object.keys(keys)) keys[key] = false;
+    keySteer = 0;
+    touchSteer = 0;
+    touchThrottle = 0;
+    touchBrake = 0;
+    touchHandbrake = false;
+    touchBoost = false;
+    gamepadSteer = 0;
+    gamepadThrottle = 0;
+    gamepadBrake = 0;
+    gamepadHandbrake = false;
+    gamepadBoost = false;
+    tiltSteer = 0;
+    for (const release of releases) release();
+  }
+
   // ------------------------------------------------------------- keyboard
   /** @param {KeyboardEvent} event */
   function onKeyDown(event) {
-    const action = KEY_MAP[event.code];
+    // Never swallow the browser's own shortcuts, and never read keys that
+    // are being typed into a field.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (isEditable(event.target)) return;
+    const action = resolveAction(event);
     if (!action) return;
-    if (event.repeat) {
-      if (action === 'up' || action === 'down' || action === 'left' || action === 'right') {
-        event.preventDefault();
-      }
+
+    const driving = DRIVING_ACTIONS.has(action);
+    if (driving && !enabled) {
+      // The menu is up: do not latch the throttle on the way into the game.
+      keys[action] = false;
       return;
     }
-    keys[action] = true;
-    if (action === 'up' || action === 'down' || action === 'left' || action === 'right' || action === 'space') {
+
+    if (enabled) {
+      // This also keeps a focused menu button from being re-activated by
+      // Space or Enter in the middle of a drift.
       event.preventDefault();
     }
+    if (event.repeat) return;
+    keys[action] = true;
     emit('action', action);
   }
 
   /** @param {KeyboardEvent} event */
   function onKeyUp(event) {
-    const action = KEY_MAP[event.code];
+    const action = resolveAction(event);
     if (!action) return;
     keys[action] = false;
   }
 
   /** @param {Window} win */
   function attachKeyboard(win) {
+    if (!win || typeof win.addEventListener !== 'function') return;
     win.addEventListener('keydown', onKeyDown, { passive: false });
     win.addEventListener('keyup', onKeyUp);
-    win.addEventListener('blur', () => {
-      for (const k of Object.keys(keys)) keys[k] = false;
-    });
+    win.addEventListener('blur', () => clearAll());
   }
 
   // --------------------------------------------------------------- touch
+  /**
+   * @param {boolean} pressed
+   * @param {string} action
+   */
+  function setTouch(action, pressed) {
+    if (action === 'gas') touchThrottle = pressed ? 1 : 0;
+    else if (action === 'brake') touchBrake = pressed ? 1 : 0;
+    else if (action === 'hand') touchHandbrake = pressed;
+    else if (action === 'boost') touchBoost = pressed;
+    emit('touch', pressed ? action : `${action}:up`);
+  }
+
   /**
    * @param {HTMLElement} el
    * @param {string} action
    */
   function attachButton(el, action) {
-    if (!el) return;
+    if (!el || typeof el.addEventListener !== 'function') return;
+    /** @type {number | null} */
+    let pointerId = null;
+
+    const release = () => {
+      pointerId = null;
+      el.classList?.remove('is-down');
+      el.setAttribute?.('aria-pressed', 'false');
+      setTouch(action, false);
+    };
+
     const down = (/** @type {PointerEvent} */ event) => {
       event.preventDefault();
-      el.classList.add('is-down');
-      try {
-        el.setPointerCapture(event.pointerId);
-      } catch {
-        /* not fatal */
+      pointerId = typeof event.pointerId === 'number' ? event.pointerId : null;
+      el.classList?.add('is-down');
+      el.setAttribute?.('aria-pressed', 'true');
+      // Capture keeps the button held even when the finger slides off it.
+      // Browsers without pointer capture fall back to the document release
+      // below, so the button still never gets stuck.
+      if (pointerId !== null && typeof el.setPointerCapture === 'function') {
+        try {
+          el.setPointerCapture(pointerId);
+        } catch {
+          /* not fatal */
+        }
       }
-      emit('touch', action);
+      setTouch(action, true);
     };
+
     const up = (/** @type {PointerEvent} */ event) => {
-      event.preventDefault();
-      el.classList.remove('is-down');
-      emit('touch', `${action}:up`);
+      if (event && typeof event.pointerId === 'number' && pointerId !== null) {
+        if (event.pointerId !== pointerId) return;
+      }
+      event?.preventDefault?.();
+      release();
     };
+
     el.addEventListener('pointerdown', down, { passive: false });
     el.addEventListener('pointerup', up, { passive: false });
     el.addEventListener('pointercancel', up, { passive: false });
-    el.addEventListener('pointerleave', up, { passive: false });
+    el.addEventListener('lostpointercapture', release);
+    el.addEventListener(
+      'pointerleave',
+      (/** @type {PointerEvent} */ event) => {
+        // While the pointer is captured the browser may report a leave even
+        // though the finger is still on the button. Only a real leave - on a
+        // browser without pointer capture - releases it.
+        if (pointerId !== null && el.hasPointerCapture?.(pointerId)) return;
+        up(event);
+      },
+      { passive: false },
+    );
     el.addEventListener('contextmenu', (event) => event.preventDefault());
+    releases.push(release);
   }
 
   /**
    * @param {HTMLElement} el
    */
   function attachSteerPad(el) {
-    if (!el) return;
+    if (!el || typeof el.addEventListener !== 'function') return;
     const knob = options.knobElement ?? null;
+    /** @type {number | null} */
+    let pointerId = null;
+    let originX = 0;
+    let halfWidth = 120;
 
     const apply = (/** @type {number} */ value) => {
       touchSteer = clamp(value, -1, 1);
-      if (knob) knob.style.transform = `translateX(${touchSteer * (steerHalfWidth - 36)}px)`;
-      el.setAttribute('aria-valuenow', String(Math.round(touchSteer * 100)));
+      if (knob) knob.style.transform = `translateX(${touchSteer * (halfWidth - 36)}px)`;
+      el.setAttribute?.('aria-valuenow', String(Math.round(touchSteer * 100)));
     };
 
-    const onMove = (/** @type {PointerEvent} */ event) => {
-      if (steerPointer !== event.pointerId) return;
-      event.preventDefault();
-      const rect = el.getBoundingClientRect();
-      steerOriginX = rect.left + rect.width / 2;
-      steerHalfWidth = rect.width / 2;
-      apply((event.clientX - steerOriginX) / (steerHalfWidth - 12));
+    const track = (/** @type {PointerEvent} */ event) => {
+      const rect = el.getBoundingClientRect?.();
+      if (!rect || !rect.width) return;
+      originX = rect.left + rect.width / 2;
+      halfWidth = rect.width / 2;
+      apply((event.clientX - originX) / Math.max(12, halfWidth - 12));
     };
 
     el.addEventListener(
       'pointerdown',
       (/** @type {PointerEvent} */ event) => {
         event.preventDefault();
-        steerPointer = event.pointerId;
-        const rect = el.getBoundingClientRect();
-        steerOriginX = rect.left + rect.width / 2;
-        steerHalfWidth = rect.width / 2;
-        try {
-          el.setPointerCapture(event.pointerId);
-        } catch {
-          /* ignore */
+        pointerId = typeof event.pointerId === 'number' ? event.pointerId : null;
+        if (pointerId !== null && typeof el.setPointerCapture === 'function') {
+          try {
+            el.setPointerCapture(pointerId);
+          } catch {
+            /* ignore */
+          }
         }
-        apply((event.clientX - steerOriginX) / (steerHalfWidth - 12));
+        track(event);
       },
       { passive: false },
     );
-    el.addEventListener('pointermove', onMove, { passive: false });
+
+    el.addEventListener(
+      'pointermove',
+      (/** @type {PointerEvent} */ event) => {
+        if (pointerId === null || event.pointerId !== pointerId) return;
+        event.preventDefault();
+        track(event);
+      },
+      { passive: false },
+    );
+
     const release = (/** @type {PointerEvent} */ event) => {
-      if (steerPointer !== event.pointerId) return;
-      steerPointer = null;
+      if (event && typeof event.pointerId === 'number' && pointerId !== null) {
+        if (event.pointerId !== pointerId) return;
+      }
+      pointerId = null;
       apply(0);
     };
     el.addEventListener('pointerup', release);
     el.addEventListener('pointercancel', release);
+    el.addEventListener(
+      'pointerleave',
+      (/** @type {PointerEvent} */ event) => {
+        if (pointerId !== null && el.hasPointerCapture?.(pointerId)) return;
+        release(event);
+      },
+      { passive: false },
+    );
+    el.addEventListener('lostpointercapture', release);
     el.addEventListener('contextmenu', (event) => event.preventDefault());
+    releases.push(() => {
+      pointerId = null;
+      touchSteer = 0;
+      apply(0);
+    });
   }
 
   // ---------------------------------------------------------------- tilt
@@ -234,14 +394,16 @@ export function createInput(options = {}) {
     if (!tiltEnabled) return;
     const gamma = event.gamma ?? 0;
     // gamma is the left/right tilt in degrees; +-25deg maps to full lock.
-    tiltSteer = clamp((gamma / 25) * tiltSensitivity, -1, 1);
+    const raw = clamp((gamma / 25) * tiltSensitivity, -1, 1);
+    // A deadzone keeps a phone held "straight" from steering on its own.
+    tiltSteer = Math.abs(raw) < 0.06 ? 0 : raw;
   }
 
   // ------------------------------------------------------------- gamepad
   function pollGamepad() {
     const nav = /** @type {any} */ (globalThis).navigator;
-    if (!nav || !nav.getGamepads) return;
-    const pads = nav.getGamepads();
+    if (!nav || typeof nav.getGamepads !== 'function') return;
+    const pads = nav.getGamepads() || [];
     let pad = null;
     for (const candidate of pads) {
       if (candidate && candidate.connected) {
@@ -257,14 +419,12 @@ export function createInput(options = {}) {
       gamepadBoost = false;
       return;
     }
-    const axis = pad.axes[0] ?? 0;
-    gamepadSteer = Math.abs(axis) < 0.12 ? 0 : axis;
-    const rt = pad.buttons[7]?.value ?? 0;
-    const lt = pad.buttons[6]?.value ?? 0;
-    gamepadThrottle = rt;
-    gamepadBrake = lt;
-    gamepadHandbrake = Boolean(pad.buttons[0]?.pressed);
-    gamepadBoost = Boolean(pad.buttons[1]?.pressed);
+    const axis = pad.axes?.[0] ?? 0;
+    gamepadSteer = Math.abs(axis) < 0.18 ? 0 : axis;
+    gamepadThrottle = pad.buttons?.[7]?.value ?? 0;
+    gamepadBrake = pad.buttons?.[6]?.value ?? 0;
+    gamepadHandbrake = Boolean(pad.buttons?.[0]?.pressed);
+    gamepadBoost = Boolean(pad.buttons?.[1]?.pressed);
   }
 
   // ------------------------------------------------------------- update
@@ -283,21 +443,27 @@ export function createInput(options = {}) {
     }
     pollGamepad();
 
-    const keyLeft = keys.left ? 1 : 0;
-    const keyRight = keys.right ? 1 : 0;
-    let keySteer = keyRight - keyLeft;
-    if (keySteer === 0) {
-      // Ease the wheel back to centre so keyboard driving feels analog.
-      state.steer += (0 - state.steer) * Math.min(1, dt * 9);
+    // Keyboard steering eases in and springs back, so it drives like an
+    // analogue stick instead of a switch.
+    const keyDirection = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    if (keyDirection === 0) {
+      keySteer += (0 - keySteer) * Math.min(1, dt * 9);
     } else {
-      const rate = keySteer * state.steer > 0 ? 6.5 : 9;
-      state.steer += (keySteer - state.steer) * Math.min(1, dt * rate);
+      const rate = keyDirection * keySteer > 0 ? 6.5 : 9;
+      keySteer += (keyDirection - keySteer) * Math.min(1, dt * rate);
     }
 
-    let steer = state.steer;
-    if (Math.abs(touchSteer) > 0.001) steer = touchSteer;
-    if (Math.abs(tiltSteer) > 0.001) steer = tiltSteer;
-    if (Math.abs(gamepadSteer) > 0.001) steer = gamepadSteer;
+    // Merge by strength: whichever control is asking for more steering wins.
+    // A faint tilt or a pad at rest can never cancel a held key.
+    let steer = keySteer;
+    let strength = Math.abs(keySteer);
+    for (const value of [gamepadSteer, touchSteer, tiltSteer]) {
+      const magnitude = Math.abs(value);
+      if (magnitude > Math.max(0.08, strength)) {
+        steer = value;
+        strength = magnitude;
+      }
+    }
     if (invertSteer) steer = -steer;
     state.steer = clamp(steer, -1, 1);
 
@@ -316,11 +482,7 @@ export function createInput(options = {}) {
     setEnabled(value) {
       enabled = value;
       if (!value) {
-        touchSteer = 0;
-        touchThrottle = 0;
-        touchBrake = 0;
-        touchHandbrake = false;
-        touchBoost = false;
+        clearAll();
         state.steer = 0;
         state.throttle = 0;
         state.brake = 0;
@@ -343,10 +505,21 @@ export function createInput(options = {}) {
     },
     /** True when the device is likely a touch device. */
     get hasTouch() {
-      return (
+      // A touchscreen laptop reports `pointer: fine` but still wants the
+      // buttons, so ask about the hardware first.
+      const navigatorLike = /** @type {any} */ (globalThis).navigator;
+      if ((navigatorLike?.maxTouchPoints ?? 0) > 0) return true;
+      if (
         typeof globalThis.matchMedia === 'function' &&
         globalThis.matchMedia('(pointer: coarse)').matches
-      );
+      ) {
+        return true;
+      }
+      return typeof /** @type {any} */ (globalThis).ontouchstart !== 'undefined';
+    },
+    /** The state of one key, for tests and the self test. */
+    clear() {
+      clearAll();
     },
     destroy() {
       globalThis.removeEventListener?.('keydown', onKeyDown);
@@ -364,17 +537,7 @@ export function createInput(options = {}) {
   attachSteerPad(options.steerElement || null);
   attachKeyboard(globalThis);
   globalThis.addEventListener?.('deviceorientation', onOrientation);
-
-  api.on('touch', (action) => {
-    if (action === 'gas') touchThrottle = 1;
-    else if (action === 'gas:up') touchThrottle = 0;
-    else if (action === 'brake') touchBrake = 1;
-    else if (action === 'brake:up') touchBrake = 0;
-    else if (action === 'hand') touchHandbrake = true;
-    else if (action === 'hand:up') touchHandbrake = false;
-    else if (action === 'boost') touchBoost = true;
-    else if (action === 'boost:up') touchBoost = false;
-  });
+  globalThis.document?.addEventListener?.('visibilitychange', () => clearAll());
 
   return api;
 }

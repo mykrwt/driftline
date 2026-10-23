@@ -91,6 +91,14 @@ export function createWorld(options) {
   carRoot.add(carModel);
   scene.scene.add(carRoot);
 
+  // The physics origin is the centre of mass, the model origin is the ground
+  // plane under the tyres, so the model has to be shifted down by the ride
+  // height. Without this the car floats half a metre above the road. (The
+  // wheels are drawn at `wheelRadius + compression` in the model and at
+  // `attach - rest + compression` in the physics.)
+  const modelDrop = spec.wheelRadius + spec.suspensionRest - 0.1;
+  const carUp = new THREE.Vector3();
+
   /** @type {Map<string, { root: THREE.Group, model: THREE.Group, data: any }>} */
   const ghosts = new Map();
 
@@ -167,15 +175,20 @@ export function createWorld(options) {
     // Off the world: too high after a launch or too far down a cliff. The
     // car is put back on the road instead of being lost.
     const lost =
-      vehicle.position.y > roadY + 45 || vehicle.position.y < roadY - 40;
+      vehicle.position.y > roadY + 25 ||
+      vehicle.position.y < roadY - 35 ||
+      Math.abs(info.lateral) > 120;
     if (lost) {
       respawn();
       return;
     }
-    const upsideDown = vehicle.quaternion.y < 0.1 && vehicle.speed < 4;
-    if (upsideDown) {
+    // A car on its roof (or on its side) cannot drive out of it. Look at the
+    // chassis up vector, not at a component of the quaternion.
+    carUp.set(0, 1, 0).applyQuaternion(vehicle.quaternion);
+    const rolledOver = carUp.y < 0.35 && vehicle.speed < 5;
+    if (rolledOver) {
       stuckTimer += dt;
-      if (stuckTimer > 2.5) {
+      if (stuckTimer > 2.2) {
         respawn();
         stuckTimer = 0;
       }
@@ -258,8 +271,10 @@ export function createWorld(options) {
     // The speed blur and the field of view follow the speed.
     const speedRatio = clamp(vehicle.speed / 62, 0, 1);
     renderer.setSpeed?.(clamp((speedRatio - 0.45) / 0.55, 0, 1) * 0.85);
-    // The car model follows the chassis exactly.
-    carRoot.position.copy(vehicle.position);
+    // The car model follows the chassis, with the body sitting on the wheels
+    // instead of hovering over them.
+    carUp.set(0, 1, 0).applyQuaternion(vehicle.quaternion);
+    carRoot.position.copy(vehicle.position).addScaledVector(carUp, -modelDrop);
     carRoot.quaternion.copy(vehicle.quaternion);
 
     const wheels = carModel.userData.wheels || [];
@@ -284,13 +299,18 @@ export function createWorld(options) {
     }
 
     for (const ghost of ghosts.values()) {
-      ghost.root.position.set(ghost.data.x, ghost.data.y, ghost.data.z);
       ghost.root.quaternion.set(
         ghost.data.qx,
         ghost.data.qy,
         ghost.data.qz,
         ghost.data.qw,
       );
+      // Same body-on-the-wheels offset as the player car, so a ghost does
+      // not hover over the road either.
+      carUp.set(0, 1, 0).applyQuaternion(ghost.root.quaternion);
+      ghost.root.position
+        .set(ghost.data.x, ghost.data.y, ghost.data.z)
+        .addScaledVector(carUp, -ghost.drop);
       const ghostWheels = ghost.model.userData.wheels || [];
       vehicle.wheels.forEach((wheel, index) => {
         const mesh = ghostWheels[index];
@@ -321,7 +341,9 @@ export function createWorld(options) {
         const root = new THREE.Group();
         root.add(model);
         scene.scene.add(root);
-        entry = { root, model, data };
+        const ghostSpec = getCarSpec(data.assetKey || 'comet');
+        const drop = ghostSpec.wheelRadius + ghostSpec.suspensionRest - 0.1;
+        entry = { root, model, data, drop };
         ghosts.set(data.id, entry);
       }
       entry.data = data;

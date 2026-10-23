@@ -12,6 +12,15 @@
  *     it back - exactly like a real car.
  *
  * The simulation runs on a fixed step and knows nothing about rendering.
+ *
+ * Two rules keep the car out of orbit, and both of them used to be missing:
+ *
+ *   - the wheel probe is a ray straight *down in the world*, so a rolled or
+ *     airborne chassis can never "find" ground where there is none and a
+ *     probe that misses is a wheel in the air, never a fully compressed one;
+ *   - the body itself collides with the terrain through a handful of points,
+ *     so a car that lands on its nose or slides into a hillside is pushed
+ *     out instead of being fired into the sky by its own springs.
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
@@ -19,11 +28,31 @@ import { clamp, sign } from '../core/math.js';
 
 const GRAVITY = 9.81;
 /** The fastest a car may be thrown upwards, in metres per second. */
-const MAX_LAUNCH = 16;
+const MAX_LAUNCH = 7.5;
 /** The fastest a car may fall, in metres per second. */
-const MAX_FALL = 70;
+const MAX_FALL = 65;
 /** The fastest the chassis may spin, in radians per second. */
-const MAX_SPIN = 9;
+const MAX_SPIN = 6;
+/** Airborne cars are held to a slower spin still: no somersaults. */
+const MAX_AIR_SPIN = 3.2;
+/** Wheel angular speed cap, rad/s. */
+const MAX_WHEEL_SPIN = 220;
+/** Wheel plus brake inertia, kg m^2. */
+const WHEEL_INERTIA = 2.6;
+/** Stencil used for the surface normal finite differences, metres. */
+const NORMAL_STEP = 0.5;
+/** How quickly the contact normal follows the terrain (0..1 per step). */
+const NORMAL_SMOOTH = 0.55;
+/** A single spring may push with at most this much of the car's weight. */
+const SPRING_FORCE_CAP = 1.15;
+/** A single body contact may push with at most this much of the weight. */
+const BODY_FORCE_CAP = 1.1;
+/** Beyond this lean the chassis is held up by an anti-rollover assist, rad. */
+const LEAN_LIMIT = 0.3;
+/** How strongly the car resists leaning past the limit. */
+const LEAN_STIFFNESS = 380;
+/** Damping for that assist, so it cannot rock the car. */
+const LEAN_DAMPING = 90;
 
 /**
  * @typedef {object} WheelSpec
@@ -45,8 +74,10 @@ const MAX_SPIN = 9;
  * @property {number} wheelbase       m
  * @property {number} trackWidth      m
  * @property {number} cgHeight        m
+ * @property {number} wheelRadius     m
  * @property {number} engineForce     N of tractive force at full throttle
  * @property {number} maxSpeed        m/s
+ * @property {number} drag            N per (m/s)^2 of aerodynamic drag
  * @property {number} brakeTorque     Nm
  * @property {number} gripFront       friction coefficient
  * @property {number} gripRear
@@ -72,8 +103,10 @@ export const CAR_SPECS = {
     wheelbase: 2.62,
     trackWidth: 1.58,
     cgHeight: 0.5,
+    wheelRadius: 0.34,
     engineForce: 9600,
     maxSpeed: 74,
+    drag: 0.96,
     brakeTorque: 2600,
     gripFront: 1.12,
     gripRear: 1.16,
@@ -96,8 +129,10 @@ export const CAR_SPECS = {
     wheelbase: 2.55,
     trackWidth: 1.66,
     cgHeight: 0.44,
+    wheelRadius: 0.35,
     engineForce: 10800,
     maxSpeed: 82,
+    drag: 0.88,
     brakeTorque: 2900,
     gripFront: 1.18,
     gripRear: 1.1,
@@ -120,8 +155,10 @@ export const CAR_SPECS = {
     wheelbase: 3.05,
     trackWidth: 1.78,
     cgHeight: 0.72,
+    wheelRadius: 0.42,
     engineForce: 9200,
     maxSpeed: 64,
+    drag: 1.24,
     brakeTorque: 3400,
     gripFront: 1.0,
     gripRear: 1.05,
@@ -141,7 +178,6 @@ export const CAR_SPECS = {
  * @property {WheelSpec} spec
  * @property {THREE.Vector3} local     attachment point in chassis space
  * @property {number} compression        0..maxTravel
- * @property {number} prevCompression
  * @property {boolean} contact
  * @property {number} load               normal force in N
  * @property {number} slipAngle
@@ -162,6 +198,7 @@ export const CAR_SPECS = {
  * @property {THREE.Vector3} angularVelocity
  * @property {CarSpec} spec
  * @property {WheelState[]} wheels
+ * @property {THREE.Vector3[]} bodyPoints collision hull points in chassis space
  * @property {number} speed
  * @property {number} slipAngle
  * @property {boolean} drifting
@@ -173,6 +210,7 @@ export const CAR_SPECS = {
  * @property {boolean} boosting
  * @property {number} wheelAngle
  * @property {number} airborne
+ * @property {number} grounded
  * @property {number} rpm
  * @property {number} gear
  * @property {number} odometer
@@ -187,13 +225,36 @@ export function getCarSpec(id) {
 }
 
 /**
+ * The points of the body that can hit the ground. They are the four corners
+ * of the floor pan, the two ends of the nose and tail, and the roof, so a car
+ * that lands on its nose or ends up on its roof still has something to rest
+ * on instead of sinking into the terrain.
+ *
+ * @param {CarSpec} spec
+ * @returns {THREE.Vector3[]}
+ */
+export function bodyCollisionPoints(spec) {
+  const halfBase = spec.wheelbase / 2;
+  const halfTrack = spec.trackWidth / 2;
+  return [
+    new THREE.Vector3(-halfTrack * 0.94, -0.3, halfBase * 0.95),
+    new THREE.Vector3(halfTrack * 0.94, -0.3, halfBase * 0.95),
+    new THREE.Vector3(-halfTrack * 0.94, -0.3, -halfBase * 0.95),
+    new THREE.Vector3(halfTrack * 0.94, -0.3, -halfBase * 0.95),
+    new THREE.Vector3(0, -0.16, halfBase + 0.72),
+    new THREE.Vector3(0, -0.16, -(halfBase + 0.72)),
+    new THREE.Vector3(0, 0.62, 0),
+  ];
+}
+
+/**
  * @param {CarSpec} spec
  * @returns {VehicleState}
  */
 export function createVehicle(spec) {
   const halfBase = spec.wheelbase / 2;
   const halfTrack = spec.trackWidth / 2;
-  const radius = 0.34;
+  const radius = spec.wheelRadius ?? 0.34;
   /** @type {WheelSpec[]} */
   const wheelSpecs = [
     { x: -halfTrack, z: halfBase, radius, front: true, driven: false },
@@ -207,7 +268,6 @@ export function createVehicle(spec) {
     // The strut top sits just above the centre of mass.
     local: new THREE.Vector3(wheelSpec.x, 0.1, wheelSpec.z),
     compression: 0,
-    prevCompression: 0,
     contact: false,
     load: 0,
     slipAngle: 0,
@@ -221,12 +281,13 @@ export function createVehicle(spec) {
   }));
 
   return {
-    position: new THREE.Vector3(0, spec.suspensionRest + 0.4, 0),
+    position: new THREE.Vector3(0, spec.suspensionRest + spec.wheelRadius + 0.1, 0),
     velocity: new THREE.Vector3(),
     quaternion: new THREE.Quaternion(),
     angularVelocity: new THREE.Vector3(),
     spec,
     wheels,
+    bodyPoints: bodyCollisionPoints(spec),
     speed: 0,
     slipAngle: 0,
     drifting: false,
@@ -239,6 +300,7 @@ export function createVehicle(spec) {
     boosting: false,
     wheelAngle: 0,
     airborne: 0,
+    grounded: 0,
     rpm: 0.15,
     gear: 1,
     odometer: 0,
@@ -257,34 +319,45 @@ export function placeVehicle(state, x, y, z, heading) {
   state.velocity.set(0, 0, 0);
   state.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), heading);
   state.angularVelocity.set(0, 0, 0);
+  state.slipAngle = 0;
+  state.drifting = false;
+  state.airborne = 0;
+  state.grounded = 0;
   for (const wheel of state.wheels) {
     wheel.compression = 0;
-    wheel.prevCompression = 0;
     wheel.spin = 0;
     wheel.load = 0;
+    wheel.slipAngle = 0;
+    wheel.slipRatio = 0;
+    wheel.contact = false;
+    wheel.contactNormal.set(0, 1, 0);
   }
 }
 
 // Scratch vectors, reused to avoid allocations in the hot loop.
-const _right = new THREE.Vector3();
 const _up = new THREE.Vector3();
 const _forward = new THREE.Vector3();
 const _wheelWorld = new THREE.Vector3();
-const _ray = new THREE.Vector3();
-const _hit = new THREE.Vector3();
+const _contact = new THREE.Vector3();
 const _normal = new THREE.Vector3();
+const _surfaceNormal = new THREE.Vector3();
 const _contactVel = new THREE.Vector3();
 const _force = new THREE.Vector3();
 const _torque = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
-const _tmp2 = new THREE.Vector3();
+const _arm = new THREE.Vector3();
+const _point = new THREE.Vector3();
 const _steerDir = new THREE.Vector3();
 const _sideDir = new THREE.Vector3();
-const _local = new THREE.Vector3();
 const _bodyTorque = new THREE.Vector3();
 const _bodyOmega = new THREE.Vector3();
 const _inertia = new THREE.Vector3();
+const _groundUp = new THREE.Vector3();
+const _leanAxis = new THREE.Vector3();
+const _velocityDir = new THREE.Vector3();
+const _alignAxis = new THREE.Vector3();
 const _quaternionDelta = new THREE.Quaternion();
+const probeScratch = { height: 0, lateral: 0, onRoad: false, s: 0 };
 
 /**
  * @typedef {object} VehicleInput
@@ -305,6 +378,8 @@ const _quaternionDelta = new THREE.Quaternion();
  */
 export function stepVehicle(state, input, groundAt, dt) {
   const spec = state.spec;
+  const mass = spec.mass;
+  const weight = mass * GRAVITY;
   const steerInput = clamp(input.steer, -1, 1);
   const throttle = clamp(input.throttle, 0, 1);
   const brake = clamp(input.brake, 0, 1);
@@ -313,11 +388,10 @@ export function stepVehicle(state, input, groundAt, dt) {
   state.braking = brake > 0.05 || handbrake;
 
   // Chassis basis.
-  _right.set(1, 0, 0).applyQuaternion(state.quaternion);
   _up.set(0, 1, 0).applyQuaternion(state.quaternion);
   _forward.set(0, 0, 1).applyQuaternion(state.quaternion);
 
-  const totalForce = _force.set(0, -GRAVITY * spec.mass, 0);
+  const totalForce = _force.set(0, -weight, 0);
   const totalTorque = _torque.set(0, 0, 0);
 
   // ------------------------------------------------------------- steering
@@ -328,74 +402,86 @@ export function stepVehicle(state, input, groundAt, dt) {
   const steerAngle = steerInput * maxSteer;
   state.wheelAngle += (steerAngle - state.wheelAngle) * Math.min(1, dt * 12);
 
+  // Aerodynamic drag: this is what gives every car a top speed.
+  totalForce.addScaledVector(state.velocity, -spec.drag * speed);
+
   // ---------------------------------------------------------------- wheels
   let groundedCount = 0;
-  let rearSlip = 0;
-  let rearLoad = 0;
-  let driveTorque = 0;
+  const maxT = spec.suspensionRest + spec.maxTravel;
+  // The wheels can only carry the car when they point at the ground.
+  const wheelsUnderneath = _up.y > 0.12;
 
   for (const wheel of state.wheels) {
     // Attachment point in world space.
     _wheelWorld.copy(wheel.local).applyQuaternion(state.quaternion).add(state.position);
 
-    // Raycast straight down along the chassis axis.
-    _ray.copy(_up).multiplyScalar(-1);
-    let t = 0;
-    if (_ray.y < -0.25) {
-      const probe = { height: 0, lateral: 0, onRoad: false, s: 0 };
-      const guess = groundAt(_wheelWorld.x, _wheelWorld.z, probe);
-      t = (_wheelWorld.y - guess) / -_ray.y;
-      // One refinement pass: the contact point moves as the ray travels.
-      _hit.copy(_wheelWorld).addScaledVector(_ray, Math.max(0, t));
-      const refined = groundAt(_hit.x, _hit.z, probe);
-      t = (_wheelWorld.y - refined) / -_ray.y;
-    }
-    const maxT = spec.suspensionRest + spec.maxTravel + wheel.spec.radius;
-    wheel.contact = t > -0.02 && t < maxT;
-    if (!wheel.contact) {
+    // Probe straight down in world space. The chassis may be rolled, pitched
+    // or upside down - the ground is always below the wheel in world space,
+    // and a probe that finds nothing means the wheel is in the air.
+    probeScratch.onRoad = false;
+    const groundY = groundAt(_wheelWorld.x, _wheelWorld.z, probeScratch);
+    const t = _wheelWorld.y - groundY;
+    const reach = maxT + wheel.spec.radius + 0.06;
+
+    if (!wheelsUnderneath || t > reach || t < -0.35) {
+      wheel.contact = false;
       wheel.compression = 0;
-      wheel.prevCompression = 0;
       wheel.load = 0;
-      wheel.spin *= 1 - dt * 0.4;
-      groundedCount += 0;
+      wheel.slipAngle = 0;
+      wheel.slipRatio = 0;
+      wheel.lateralSlipSpeed = 0;
+      // A wheel in the air keeps spinning, slowly slowing down.
+      wheel.spin *= 1 - Math.min(1, dt * 0.5);
       continue;
     }
+
     groundedCount++;
+    wheel.contact = true;
 
-    _hit.copy(_wheelWorld).addScaledVector(_ray, t);
-    wheel.contactPoint.copy(_hit);
+    // The contact patch is the point of the ground under the wheel.
+    _contact.set(_wheelWorld.x, groundY, _wheelWorld.z);
+    wheel.contactPoint.copy(_contact);
+    wheel.onRoad = probeScratch.onRoad;
 
-    // Suspension: the spring pushes the chassis up along the contact normal.
-    const probe = { height: 0, lateral: 0, onRoad: false, s: 0 };
-    groundAt(_hit.x, _hit.z, probe);
-    wheel.onRoad = probe.onRoad;
-    const groundNormal = surfaceNormalFor(probe, _normal);
+    // The real slope of the ground, not a guess from the distance to the
+    // road: this is what keeps the car from being thrown sideways on a
+    // hillside and from sinking into it.
+    surfaceNormalFrom(groundAt, _contact.x, _contact.z, groundY, _surfaceNormal);
+    wheel.contactNormal.lerp(_surfaceNormal, NORMAL_SMOOTH);
+    if (wheel.contactNormal.lengthSq() < 1e-6) wheel.contactNormal.set(0, 1, 0);
+    wheel.contactNormal.normalize();
+    _normal.copy(wheel.contactNormal);
 
-    const springLength = t - wheel.spec.radius;
+    const springLength = Math.max(0, t - wheel.spec.radius);
     const compression = clamp(spec.suspensionRest - springLength, 0, spec.maxTravel);
-    const compressionRate = (compression - wheel.prevCompression) / dt;
-    wheel.prevCompression = wheel.compression;
     wheel.compression = compression;
 
-    let normalForce = spec.suspensionK * compression + spec.suspensionC * clamp(compressionRate, -0.9, 0.9);
-    // Bump stop: the last centimetres of travel are stiffer, but not a wall.
-    if (compression > spec.maxTravel * 0.9) {
-      normalForce += (compression - spec.maxTravel * 0.9) * spec.suspensionK * 2.5;
-    }
-    // A hard cap keeps a sharp step from launching the car.
-    normalForce = Math.min(normalForce, spec.mass * 9.81 * 1.6);
-    normalForce = Math.max(0, normalForce);
-    wheel.load = normalForce;
+    // Velocity of the contact patch: the spring and damper act on it.
+    _arm.copy(_contact).sub(state.position);
+    _contactVel.copy(state.angularVelocity).cross(_arm).add(state.velocity);
+    const normalSpeed = _contactVel.dot(_normal);
 
-    _tmp.copy(groundNormal).multiplyScalar(normalForce);
+    let load = spec.suspensionK * compression;
+    // Bump stop: the last centimetres of travel are stiffer, but not a wall.
+    if (compression > spec.maxTravel * 0.86) {
+      load += (compression - spec.maxTravel * 0.86) * spec.suspensionK * 3.5;
+    }
+    // The damper only resists the chassis moving into the ground. Pulling the
+    // car down is not something a damper does.
+    load += spec.suspensionC * clamp(-normalSpeed, 0, 2.4);
+    // A buried wheel is pushed out instead of being pulled through the floor.
+    if (t < wheel.spec.radius) {
+      load += (wheel.spec.radius - t) * spec.suspensionK * 2.2;
+    }
+    load = clamp(load, 0, weight * SPRING_FORCE_CAP);
+    wheel.load = load;
+
+    _tmp.copy(_normal).multiplyScalar(load);
     totalForce.add(_tmp);
-    _tmp2.copy(_hit).sub(state.position);
-    totalTorque.add(_tmp2.cross(_tmp));
+    _arm.copy(_contact).sub(state.position);
+    totalTorque.add(_arm.cross(_tmp));
 
     // ------------------------------------------------------- tyre forces
-    const contactOffset = _tmp2.copy(_hit).sub(state.position);
-    _contactVel.copy(state.angularVelocity).cross(contactOffset).add(state.velocity);
-
     // Wheel frame projected on the ground plane. The car faces +Z, so its
     // right hand side is -X.
     if (wheel.spec.front) {
@@ -403,8 +489,10 @@ export function stepVehicle(state, input, groundAt, dt) {
     } else {
       _steerDir.copy(_forward);
     }
-    _steerDir.addScaledVector(groundNormal, -_steerDir.dot(groundNormal)).normalize();
-    _sideDir.copy(_steerDir).cross(groundNormal).normalize();
+    _steerDir.addScaledVector(_normal, -_steerDir.dot(_normal));
+    if (_steerDir.lengthSq() < 1e-6) _steerDir.copy(_forward);
+    _steerDir.normalize();
+    _sideDir.copy(_steerDir).cross(_normal).normalize();
 
     const forwardVel = _contactVel.dot(_steerDir);
     const lateralVel = _contactVel.dot(_sideDir);
@@ -420,7 +508,6 @@ export function stepVehicle(state, input, groundAt, dt) {
       (handbrakeRear ? 0.45 : 1);
 
     // Load sensitive grip: a heavily loaded tyre gives a bit more grip.
-    const load = normalForce;
     const maxLateral = mu * load;
 
     // Slip angle and the tyre curve: grip builds up to the peak, then falls
@@ -432,50 +519,127 @@ export function stepVehicle(state, input, groundAt, dt) {
       normalized <= 1
         ? Math.sin((normalized * Math.PI) / 2)
         : Math.max(0.32, 1 - (normalized - 1) * 0.42);
-    let lateralForce = -maxLateral * shape * Math.sign(slipAngle);
+    const lateralForce = load > 1 ? -maxLateral * shape * Math.sign(slipAngle) : 0;
 
-    // Longitudinal: engine torque and brakes act on the wheel, the ground
-    // reacts through the friction circle.
-    const wheelInertia = 1.35;
+    // Longitudinal: the wheel has its own spin, the ground reacts through the
+    // friction circle. The target spin comes from the torque balance, which
+    // keeps this stable at any step size instead of ringing between full
+    // wheelspin and a locked wheel every step.
+    const longMax = Math.sqrt(Math.max(0, maxLateral * maxLateral - lateralForce * lateralForce));
+    const rollingSpeed = forwardVel / wheel.spec.radius;
+    // Below walking pace the brake pedal becomes reverse gear, which is what
+    // the control table promises. It fades out around 40 km/h in reverse.
+    const wantReverse = brake > 0.1 && throttle < 0.1 && !handbrake && forwardSpeed < 0.6;
+    let demand = 0;
     if (wheel.spec.driven && !handbrake) {
-      const drive = (throttle * spec.engineForce * gearFactor(state, forwardSpeed)) / 2;
-      const torqueAtWheel = drive * wheel.spec.radius;
-      wheel.spin += (torqueAtWheel / wheelInertia) * dt;
+      if (wantReverse) {
+        const fade = clamp(1 - Math.max(0, -forwardSpeed) / 12, 0, 1);
+        demand -= (spec.engineForce * 0.45 * brake * fade * gearFactor(state, forwardSpeed)) / 2;
+      } else {
+        demand += (throttle * spec.engineForce * gearFactor(state, forwardSpeed)) / 2;
+      }
     }
-    if (handbrakeRear) {
-      wheel.spin *= 1 - Math.min(1, dt * 30);
+    if (brake > 0 && load > 1 && !wantReverse) {
+      // Brakes act against the direction the wheel rolls.
+      const brakeForce = (spec.brakeTorque * brake * (wheel.spec.front ? 0.62 : 0.38)) / wheel.spec.radius;
+      demand -= brakeForce * sign(rollingSpeed || forwardVel || 1);
     }
-    if (brake > 0) {
-      const brakeTorque = spec.brakeTorque * brake * (wheel.spec.front ? 0.62 : 0.38);
-      const brakeDelta = (brakeTorque / wheelInertia) * dt;
-      wheel.spin -= Math.min(Math.abs(wheel.spin), brakeDelta) * sign(wheel.spin);
+    demand = clamp(demand, -longMax, longMax);
+    // A wheel with next to no load has no grip to spend: it just rolls.
+    let targetSpin = rollingSpeed;
+    if (load > 1) {
+      const ratio = clamp(demand / Math.max(1, mu * load * 0.95), -0.98, 0.98);
+      const targetSlip = Math.atanh(ratio) / 4.5;
+      targetSpin = (forwardVel + targetSlip * Math.max(2.5, Math.abs(forwardVel))) / wheel.spec.radius;
     }
-    if (!wheel.spec.driven) {
-      // Free rolling wheel: the engine is off, the ground spins it up.
-      const rollSpeed = forwardVel / wheel.spec.radius;
-      wheel.spin += (rollSpeed - wheel.spin) * Math.min(1, dt * 14);
-    }
+    if (handbrakeRear) targetSpin = 0;
+    wheel.spin += (targetSpin - wheel.spin) * Math.min(1, dt * 45);
+    wheel.spin = clamp(wheel.spin, -MAX_WHEEL_SPIN, MAX_WHEEL_SPIN);
 
     const wheelSurfaceSpeed = wheel.spin * wheel.spec.radius;
     const slipRatio = clamp((wheelSurfaceSpeed - forwardVel) / Math.max(2.5, Math.abs(forwardVel)), -1, 1);
     wheel.slipRatio = slipRatio;
 
     // The friction circle: longitudinal force uses whatever grip is left.
-    const used = Math.abs(lateralForce);
-    const longMax = Math.sqrt(Math.max(0, maxLateral * maxLateral - used * used));
-    let longitudinalForce = mu * load * Math.tanh(slipRatio * 4.5) * 0.95;
-    longitudinalForce = clamp(longitudinalForce, -longMax, longMax);
-    // The reaction torque from the ground slows the wheel down.
-    wheel.spin -= (longitudinalForce * wheel.spec.radius * dt) / wheelInertia;
+    const longitudinalForce = clamp(mu * load * Math.tanh(slipRatio * 4.5) * 0.95, -longMax, longMax);
 
-    _tmp.copy(_steerDir).multiplyScalar(longitudinalForce);
-    _tmp.addScaledVector(_sideDir, lateralForce);
+    _tmp.copy(_steerDir).multiplyScalar(longitudinalForce).addScaledVector(_sideDir, lateralForce);
     totalForce.add(_tmp);
-    totalTorque.add(contactOffset.cross(_tmp));
+    _arm.copy(_contact).sub(state.position);
+    totalTorque.add(_arm.cross(_tmp));
+  }
 
-    if (!wheel.spec.front) {
-      rearSlip += Math.abs(slipAngle);
-      rearLoad += load;
+  // -------------------------------------------------------- body collision
+  // The wheels carry the car, but the body still has to be kept out of the
+  // hillside. Without this a car that lands nose first digs in and the
+  // springs fire it straight back up.
+  const bodyK = mass * 260;
+  const bodyC = mass * 26;
+  // The caps are per step, not per point: a car that lands on all four
+  // corners must not be pushed four times as hard as one that lands on one.
+  let bodyPushLeft = weight * BODY_FORCE_CAP * 2.5;
+  for (const local of state.bodyPoints) {
+    _point.copy(local).applyQuaternion(state.quaternion).add(state.position);
+    probeScratch.onRoad = false;
+    const groundY = groundAt(_point.x, _point.z, probeScratch);
+    const penetration = groundY - _point.y;
+    if (penetration <= 0.005) continue;
+
+    _arm.copy(_point).sub(state.position);
+    _contactVel.copy(state.angularVelocity).cross(_arm).add(state.velocity);
+
+    if (bodyPushLeft <= 0) break;
+    let push = bodyK * penetration + bodyC * clamp(-_contactVel.y, 0, 6);
+    push = clamp(push, 0, Math.min(weight * BODY_FORCE_CAP, bodyPushLeft));
+    bodyPushLeft -= push;
+    _tmp.set(0, push, 0);
+    totalForce.add(_tmp);
+    totalTorque.add(_arm.cross(_tmp));
+
+    // Scraping along the ground: a car on its side does not skate uphill.
+    const friction = Math.min(push * 0.8, mass * 10);
+    const horizontal = Math.hypot(_contactVel.x, _contactVel.z);
+    if (horizontal > 0.02 && friction > 0) {
+      _tmp.set(
+        (-_contactVel.x / horizontal) * friction,
+        0,
+        (-_contactVel.z / horizontal) * friction,
+      );
+      totalForce.add(_tmp);
+      _arm.copy(_point).sub(state.position);
+      totalTorque.add(_arm.cross(_tmp));
+    }
+  }
+
+  // --- anti-rollover assist ---------------------------------------------
+  // A road car tips over at about one g of lateral load, and a drift in this
+  // game pulls more than that on the grass. The chassis is held upright once
+  // it leans more than about 17 degrees away from the ground it is standing
+  // on, so a drift ends in a slide instead of a roll. The assist can never
+  // lift the car: it is capped below the torque of its own weight.
+  if (groundedCount > 0) {
+    _groundUp.set(0, 0, 0);
+    for (const wheel of state.wheels) {
+      if (wheel.contact) _groundUp.add(wheel.contactNormal);
+    }
+    if (_groundUp.lengthSq() > 1e-6) {
+      _groundUp.normalize();
+      const lean = Math.acos(clamp(_up.dot(_groundUp), -1, 1));
+      if (lean > LEAN_LIMIT && lean < 1.4) {
+        // Rotating around `up x ground` brings the chassis back upright.
+        _leanAxis.copy(_up).cross(_groundUp);
+        if (_leanAxis.lengthSq() > 1e-6) {
+          _leanAxis.normalize();
+          const rate = state.angularVelocity.dot(_leanAxis);
+          const excess = lean - LEAN_LIMIT;
+          const assist = clamp(
+            excess * mass * LEAN_STIFFNESS - rate * mass * LEAN_DAMPING,
+            0,
+            weight * spec.trackWidth * 0.42,
+          );
+          totalTorque.addScaledVector(_leanAxis, assist);
+        }
+      }
     }
   }
 
@@ -483,36 +647,63 @@ export function stepVehicle(state, input, groundAt, dt) {
   // Like the traction control of a modern car: past a certain slip angle the
   // chassis is nudged back towards its travel direction, so a drift can be
   // held and caught instead of turning into a spin.
+  //
+  // The nudge is built from the heading and the velocity vectors, not from
+  // the sign of the slip angle: at a full spin the slip angle jumps between
+  // +180 and -180 degrees and a torque built on its sign flips every step,
+  // which is how a car used to end up sliding backwards for ever.
   const horizontalSpeed = Math.hypot(state.velocity.x, state.velocity.z);
-  const slipMagnitude = Math.abs(state.slipAngle);
-  if (slipMagnitude > 0.48 && horizontalSpeed > 4) {
-    const excess = slipMagnitude - 0.48;
-    const assist = -Math.sign(state.slipAngle) * excess * 14000;
-    totalTorque.addScaledVector(_up, assist);
+  if (groundedCount > 1 && horizontalSpeed > 4) {
+    _velocityDir.set(state.velocity.x, 0, state.velocity.z).multiplyScalar(1 / horizontalSpeed);
+    _alignAxis.copy(_forward).cross(_velocityDir);
+    const sin = _alignAxis.length();
+    const alignment = Math.atan2(sin, _forward.x * _velocityDir.x + _forward.z * _velocityDir.z);
+    if (alignment > 0.48) {
+      if (sin > 0.02) {
+        _alignAxis.multiplyScalar(1 / sin);
+      } else {
+        // Sliding exactly backwards: every rotation is equally short, so the
+        // steering decides which way the car swings round.
+        _alignAxis.copy(_up).multiplyScalar(steerInput > 0 ? -1 : 1);
+      }
+      const excess = alignment - 0.48;
+      // Gentle at the angles a drift lives in, firm once the car is really
+      // sideways, so a spin can always be caught.
+      const rate = state.angularVelocity.dot(_alignAxis);
+      const assist = clamp(
+        excess * mass * 0.4 + excess * excess * excess * mass * 6 - rate * mass * 0.1,
+        0,
+        weight * spec.trackWidth * 0.6,
+      );
+      totalTorque.addScaledVector(_alignAxis, assist);
+    }
   }
 
   // ------------------------------------------------------------- integrate
-  const acceleration = _tmp.copy(totalForce).multiplyScalar(1 / spec.mass);
+  const acceleration = _tmp.copy(totalForce).multiplyScalar(1 / mass);
   state.velocity.addScaledVector(acceleration, dt);
+  // A car that drives into a cliff at full speed would be turned into a
+  // rocket by the contact forces. The vertical speed is capped so a launch
+  // stays a jump instead of a trip to the moon.
+  state.velocity.y = clamp(state.velocity.y, -MAX_FALL, MAX_LAUNCH);
   state.position.addScaledVector(state.velocity, dt);
 
   // Angular integration in the body frame with a diagonal inertia tensor.
   _bodyTorque.copy(totalTorque).applyQuaternion(_quaternionDelta.copy(state.quaternion).invert());
   _bodyOmega.copy(state.angularVelocity).applyQuaternion(_quaternionDelta);
-  const mass = spec.mass;
-  _inertia.set(
-    mass * 0.32,
-    mass * 2.05,
-    mass * 2.4,
-  );
+  _inertia.set(mass * 0.42, mass * 1.95, mass * 2.25);
   const gyroX = _bodyOmega.y * _bodyOmega.z * (_inertia.z - _inertia.y);
   const gyroY = _bodyOmega.z * _bodyOmega.x * (_inertia.x - _inertia.z);
   const gyroZ = _bodyOmega.x * _bodyOmega.y * (_inertia.y - _inertia.x);
   _bodyOmega.x += ((_bodyTorque.x + gyroX) / _inertia.x) * dt;
   _bodyOmega.y += ((_bodyTorque.y + gyroY) / _inertia.y) * dt;
   _bodyOmega.z += ((_bodyTorque.z + gyroZ) / _inertia.z) * dt;
-  // A touch of damping keeps the chassis from ringing.
-  _bodyOmega.multiplyScalar(1 - Math.min(0.5, dt * 0.35));
+  // A touch of damping keeps the chassis from ringing; in the air there is
+  // nothing to push against, so a tumble is damped harder and capped lower.
+  _bodyOmega.multiplyScalar(1 - Math.min(0.5, dt * (groundedCount > 0 ? 1.4 : 2.6)));
+  const spinLimit = groundedCount > 0 ? MAX_SPIN : MAX_AIR_SPIN;
+  const bodySpin = _bodyOmega.length();
+  if (bodySpin > spinLimit) _bodyOmega.multiplyScalar(spinLimit / bodySpin);
   state.angularVelocity.copy(_bodyOmega).applyQuaternion(state.quaternion);
 
   _quaternionDelta.set(
@@ -528,20 +719,23 @@ export function stepVehicle(state, input, groundAt, dt) {
   state.quaternion.w += _quaternionDelta.w;
   state.quaternion.normalize();
 
-  // ---------------------------------------------------------------- state
-  const newSpeed = state.velocity.length();
-  state.speed = newSpeed;
-  state.odometer += Math.abs(forwardSpeed) * dt;
-  state.airborne = groundedCount === 0 ? Math.min(1, state.airborne + dt * 2) : Math.max(0, state.airborne - dt * 4);
+  // Keep the numbers sane even if a machine or a very strange step slips
+  // something through.
+  if (!Number.isFinite(state.position.y) || !Number.isFinite(state.quaternion.w)) {
+    state.velocity.set(0, 0, 0);
+    state.angularVelocity.set(0, 0, 0);
+    state.quaternion.set(0, 0, 0, 1);
+    state.position.y = 0;
+  }
 
-  // A car that drives into a cliff at full speed would be turned into a
-  // rocket by the contact forces. The vertical speed is capped so a launch
-  // stays a jump instead of a trip to the moon.
-  if (state.velocity.y > MAX_LAUNCH) state.velocity.y = MAX_LAUNCH;
-  if (state.velocity.y < -MAX_FALL) state.velocity.y = -MAX_FALL;
-  // The spin is capped as well, so a tumble cannot become a blender.
-  const spin = state.angularVelocity.length();
-  if (spin > MAX_SPIN) state.angularVelocity.multiplyScalar(MAX_SPIN / spin);
+  // ---------------------------------------------------------------- state
+  state.speed = state.velocity.length();
+  state.odometer += Math.abs(forwardSpeed) * dt;
+  state.grounded = groundedCount;
+  state.airborne =
+    groundedCount === 0
+      ? Math.min(1, state.airborne + dt * 2)
+      : Math.max(0, state.airborne - dt * 4);
 
   // The chassis slip angle: the angle between where the car points and where
   // it is actually going. That is the drift.
@@ -602,19 +796,23 @@ function gearFactor(state, forwardSpeed) {
 }
 
 /**
- * Surface normal from the probe result (approximate, cheap and stable).
- * @param {{ height: number, lateral: number, onRoad: boolean, s: number }} probe
+ * The slope of the ground at a point, from the height function itself.
+ *
+ * @param {(x: number, z: number, out: any) => number} groundAt
+ * @param {number} x
+ * @param {number} z
+ * @param {number} height height at (x, z), already sampled
  * @param {THREE.Vector3} out
  */
-function surfaceNormalFor(probe, out) {
-  // On the road the surface is nearly flat; off it we approximate with a
-  // gentle slope based on the lateral position.
-  if (probe.onRoad) {
-    out.set(0, 1, 0);
-    return out;
-  }
-  const slope = clamp(probe.lateral * 0.02, -0.5, 0.5);
-  out.set(-slope, 1, 0).normalize();
+function surfaceNormalFrom(groundAt, x, z, height, out) {
+  const e = NORMAL_STEP;
+  probeScratch.onRoad = false;
+  const hx = groundAt(x + e, z, probeScratch);
+  probeScratch.onRoad = false;
+  const hz = groundAt(x, z + e, probeScratch);
+  out.set(-(hx - height) / e, 1, -(hz - height) / e);
+  if (out.lengthSq() < 1e-6) out.set(0, 1, 0);
+  else out.normalize();
   return out;
 }
 

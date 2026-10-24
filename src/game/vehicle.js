@@ -95,8 +95,8 @@ const LEAN_DAMPING = 90;
 export const CAR_SPECS = {
   vector: {
     id: 'vector',
-    name: 'Vector GT',
-    color: '#ff3f6d',
+    name: 'GR Supra',
+    color: '#ff2848',
     accent: '#ffd166',
     assetKey: 'vector',
     mass: 1240,
@@ -117,11 +117,11 @@ export const CAR_SPECS = {
     maxTravel: 0.24,
     downforce: 0.35,
     driftBonus: 1,
-    description: 'Balanced street car. Quick, forgiving, easy to hold a slide.',
+    description: 'Toyota GR Supra 3.0 RZ — turbo inline-6, balanced chassis & JDM turbo flutter.',
   },
   comet: {
     id: 'comet',
-    name: 'Comet RS',
+    name: 'M4 Competition',
     color: '#31d6ff',
     accent: '#e9fbff',
     assetKey: 'comet',
@@ -143,11 +143,11 @@ export const CAR_SPECS = {
     maxTravel: 0.2,
     downforce: 0.9,
     driftBonus: 1.15,
-    description: 'Mid engine racer. Huge power, sharp rear end, snappy.',
+    description: 'BMW M4 Competition GT — twin-turbo S58 inline-6, sharp turn-in & Sport+ burbles.',
   },
   bulldozer: {
     id: 'bulldozer',
-    name: 'Bulldozer V8',
+    name: 'GT-R Nismo',
     color: '#ffa02b',
     accent: '#fff3d6',
     assetKey: 'bulldozer',
@@ -169,7 +169,7 @@ export const CAR_SPECS = {
     maxTravel: 0.3,
     downforce: 0.2,
     driftBonus: 1.35,
-    description: 'Heavy V8 truck. Plants itself, slides wide, scores big.',
+    description: 'Nissan GT-R Nismo GT3 — twin-turbo VR38 powerhouse, wide stance & huge drifts.',
   },
 };
 
@@ -771,7 +771,8 @@ export function stepVehicle(state, input, groundAt, dt) {
     }
   }
 
-  // Boost.
+  // Boost & brake light telemetry.
+  state.braking = brake > 0.05 || Boolean(input.handbrake);
   const boosting = Boolean(input.boost) && state.boostFuel > 0.01 && throttle > 0.1;
   state.boosting = boosting;
   if (boosting) state.boostFuel = Math.max(0, state.boostFuel - 0.32 * dt);

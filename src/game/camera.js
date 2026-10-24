@@ -64,9 +64,9 @@ export function updateCamera(camera, vehicle, dt, immediate = false) {
   }
 
   const speedRatio = clamp(speed / 62, 0, 1);
-  // The camera pulls back and rises a little with the speed.
-  const back = 6.9 + speedRatio * 2.6;
-  const height = 2.55 + speedRatio * 0.5;
+  // Crisp sports-car chase framing: close enough to admire body lines, wings & flames while keeping corners clear ahead.
+  const back = 5.45 + speedRatio * 2.15;
+  const height = 2.08 + speedRatio * 0.42;
   const targetX = position.x - Math.sin(heading) * back;
   const targetZ = position.z - Math.cos(heading) * back;
   const targetY = position.y + height;

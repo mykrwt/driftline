@@ -206,26 +206,29 @@ export function applyProceduralTerrainShader(material, options = {}) {
           col = mix(col, flowerCol, grassZone * flowerField * flowerDot * nearFade * 0.55);
 
           // --- 3. Geological dipping cliff strata, crags & scree couloirs ----
-          // Domain-warped granitic/sedimentary rock ledges so bands never look like smooth horizontal stripes!
-          float strataWarp = macroVar * 13.5 + midVar * 4.8;
-          float dip = wp.y * 0.28 + wp.x * 0.045 - wp.z * 0.032 + strataWarp;
-          float bandMajor = sin(dip * 1.65);
-          float bandMinor = sin(dip * 5.4 + midVar * 3.8);
-          float strataLedge = smoothstep(-0.32, 0.52, bandMajor * 0.62 + bandMinor * 0.38);
-
-          // Triplanar rock fracture network on steep faces.
-          float fracX = tridged3(wp.zy * vec2(0.095, 0.068));
-          float fracZ = tridged3(wp.xy * vec2(0.095, 0.068));
-          float fracture = fracX * (triW.x / max(triW.x + triW.z, 0.001))
-                         + fracZ * (triW.z / max(triW.x + triW.z, 0.001));
-
           float rockPresence = clamp(steepRock + smoothstep(0.48, 0.78, macroVar) * smoothstep(14.0, 50.0, alt) * 0.78, 0.0, 1.0);
-          vec3 rockBase = mix(uRockTint * 0.34, uRockWarm * 0.50, strataLedge);
-          rockBase *= mix(0.58, 1.32, fracture);
-          // Dark vertical water-seep streaks in cliff gullies.
-          float seep = smoothstep(0.15, 0.65, concavity) * cliffMask;
-          rockBase *= mix(1.0, 0.52, seep * 0.75);
-          col = mix(col, rockBase * photoDetail * 1.25, rockPresence * (0.68 * farFade + 0.24));
+          float strataLedge = 0.0;
+          float fracture = 0.5;
+          if (rockPresence > 0.015) {
+            float strataWarp = macroVar * 13.5 + midVar * 4.8;
+            float dip = wp.y * 0.28 + wp.x * 0.045 - wp.z * 0.032 + strataWarp;
+            float bandMajor = sin(dip * 1.65);
+            float bandMinor = sin(dip * 5.4 + midVar * 3.8);
+            strataLedge = smoothstep(-0.32, 0.52, bandMajor * 0.62 + bandMinor * 0.38);
+
+            if (midFade > 0.02) {
+              float fracX = tridged3(wp.zy * vec2(0.095, 0.068));
+              float fracZ = tridged3(wp.xy * vec2(0.095, 0.068));
+              fracture = fracX * (triW.x / max(triW.x + triW.z, 0.001))
+                       + fracZ * (triW.z / max(triW.x + triW.z, 0.001));
+            }
+
+            vec3 rockBase = mix(uRockTint * 0.34, uRockWarm * 0.50, strataLedge);
+            rockBase *= mix(0.62, 1.28, fracture);
+            float seep = smoothstep(0.15, 0.65, concavity) * cliffMask;
+            rockBase *= mix(1.0, 0.54, seep * 0.72);
+            col = mix(col, rockBase * photoDetail * 1.25, rockPresence * (0.68 * farFade + 0.24));
+          }
 
           // Pale limestone/granite scree & talus cones collecting in gullies & below cliffs.
           float screeMask = clamp(
@@ -287,17 +290,18 @@ export function applyProceduralTerrainShader(material, options = {}) {
         '#include <normal_fragment_maps>',
         `#include <normal_fragment_maps>
         {
-          // Analytic screen-space bump derivatives from vMicroHeight (clamped to never shimmer).
+          // Analytic screen-space bump derivatives attenuated cleanly at grazing angles (zero cliff chatter!).
           vec3 dpdx = dFdx(vViewPosition);
           vec3 dpdy = dFdy(vViewPosition);
-          float dhdx = clamp(dFdx(vMicroHeight), -0.35, 0.35);
-          float dhdy = clamp(dFdy(vMicroHeight), -0.35, 0.35);
+          float dhdx = clamp(dFdx(vMicroHeight), -0.22, 0.22);
+          float dhdy = clamp(dFdy(vMicroHeight), -0.22, 0.22);
           vec3 r1 = cross(dpdy, normal);
           vec3 r2 = cross(normal, dpdx);
           float det = dot(dpdx, r1);
-          if (abs(det) > 1e-6) {
+          float grazeSafe = smoothstep(0.002, 0.035, abs(det));
+          if (grazeSafe > 0.001) {
             vec3 grad = sign(det) * (dhdx * r1 + dhdy * r2);
-            normal = normalize(abs(det) * normal - grad * 1.35);
+            normal = normalize(abs(det) * normal - grad * (0.85 * grazeSafe));
           }
         }`,
       )

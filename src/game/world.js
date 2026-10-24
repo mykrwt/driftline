@@ -43,7 +43,7 @@ const PHYSICS_STEP = 1 / 120;
 export function createWorld(options) {
   const seed = options.seed ?? 0x5eed;
   const profile = createRoadProfile(seed);
-  const spec = getCarSpec(options.carId || 'vector');
+  let spec = getCarSpec(options.carId || 'vector');
 
   const vehicle = createVehicle(spec);
   const spawnS = 40;
@@ -83,7 +83,7 @@ export function createWorld(options) {
 
   // --- car model ---------------------------------------------------------
   const carRoot = new THREE.Group();
-  const carModel = createCarModel(
+  let carModel = createCarModel(
     { color: spec.color, accent: spec.accent, assetKey: spec.assetKey },
     false,
     options.assets,
@@ -114,13 +114,14 @@ export function createWorld(options) {
   syncHeadlights();
 
   scene.scene.add(carRoot);
+  options.audio?.setCar?.(spec.id);
 
   // The physics origin is the centre of mass, the model origin is the ground
   // plane under the tyres, so the model has to be shifted down by the ride
   // height. Without this the car floats half a metre above the road. (The
   // wheels are drawn at `wheelRadius + compression` in the model and at
   // `attach - rest + compression` in the physics.)
-  const modelDrop = spec.wheelRadius + spec.suspensionRest - 0.1;
+  let modelDrop = spec.wheelRadius + spec.suspensionRest - 0.1;
   const carUp = new THREE.Vector3();
 
   /** @type {Map<string, { root: THREE.Group, model: THREE.Group, data: any }>} */
@@ -167,11 +168,45 @@ export function createWorld(options) {
   const autopilot = createAutopilot(profile);
   let autopilotEnabled = false;
   let elapsed = 0;
+  let impactCooldown = 0;
+
+  /**
+   * @param {import('./collision.js').CollisionEvent} ev
+   */
+  function handleCollision(ev) {
+    const force = clamp((ev.normalSpeed * 0.8 + ev.slideSpeed * 0.14) / 18, 0.08, 1);
+    if (ev.kind === 'guardrail' || ev.kind === 'post') {
+      if (impactCooldown <= 0 || ev.slideSpeed > 4) {
+        effects.emitSpark(ev.x, ev.y, ev.z, vehicle.velocity.x, vehicle.velocity.z, ev.nx, ev.nz, force);
+      }
+    } else {
+      effects.emitSmoke(
+        ev.x,
+        ev.y + 0.15,
+        ev.z,
+        ev.nx * 2.4,
+        ev.nz * 2.4,
+        clamp(force * 1.2, 0.35, 1),
+        [0.64, 0.56, 0.44],
+      );
+    }
+    if (impactCooldown <= 0 && ev.normalSpeed > 1.2) {
+      kickCamera(cameraState, clamp(ev.normalSpeed / 22, 0.06, 0.42));
+      options.audio?.impact?.(clamp(ev.normalSpeed / 18, 0.12, 1), ev.kind);
+      emit('impact', { kind: ev.kind, speed: ev.normalSpeed });
+      impactCooldown = 0.09;
+    }
+  }
 
   /**
    * @param {number} dt
    */
   function update(dt) {
+    impactCooldown = Math.max(0, impactCooldown - dt);
+    const refined = scene.terrain.update(vehicle.position.z);
+    if (refined) scene.chunks.rebuildAll(vehicle.position.z);
+    else scene.chunks.update(vehicle.position.z);
+
     const controls = options.input
       ? options.input.state
       : { steer: 0, throttle: 0, brake: 0, handbrake: false, boost: false };
@@ -185,11 +220,14 @@ export function createWorld(options) {
           boost: controls.boost,
         };
 
-    // Fixed sub steps keep the suspension stable at any frame rate.
+    // Fixed sub steps keep suspension & solid guardrail/obstacle collisions tunnel-free at any frame rate!
     let remaining = Math.min(dt, 0.1);
     while (remaining > 0) {
       const step = Math.min(PHYSICS_STEP, remaining);
+      const prevX = vehicle.position.x;
+      const prevZ = vehicle.position.z;
       stepVehicle(vehicle, input, groundAt, step);
+      scene.collisions?.resolveVehicle(vehicle, prevX, prevZ, handleCollision);
       remaining -= step;
     }
 
@@ -229,7 +267,7 @@ export function createWorld(options) {
     // --- audio -----------------------------------------------------------
     const audio = options.audio;
     if (audio) {
-      audio.engine(vehicle.rpm, controls.throttle);
+      audio.engine(vehicle.rpm, input.throttle, vehicle.gear, vehicle.boosting);
       const rearSlip = vehicle.wheels[2].lateralSlipSpeed + vehicle.wheels[3].lateralSlipSpeed;
       audio.tyre(clamp((Math.abs(rearSlip) - 1.2) / 7, 0, 1), vehicle.speed);
       audio.wind(vehicle.speed);
@@ -316,11 +354,26 @@ export function createWorld(options) {
       mesh.position.y = (mesh.userData.baseY ?? (mesh.userData.baseY = mesh.position.y)) + wheel.compression;
     });
 
-    // The brake lights come on, the boost burns the exhaust.
+    // Brake lights flare bright crimson; boost lights twin afterburners!
     const tailMat = carModel.userData.tailMat;
+    const tailBarMat = carModel.userData.tailBarMat;
     if (tailMat) {
-      const braking = vehicle.braking ? 3.4 : 1.4;
-      tailMat.emissiveIntensity += (braking - tailMat.emissiveIntensity) * Math.min(1, dt * 14);
+      const targetTail = vehicle.braking ? 5.2 : 1.85;
+      tailMat.emissiveIntensity += (targetTail - tailMat.emissiveIntensity) * Math.min(1, dt * 16);
+    }
+    if (tailBarMat) {
+      const targetBar = vehicle.braking ? 3.8 : 1.15;
+      tailBarMat.emissiveIntensity += (targetBar - tailBarMat.emissiveIntensity) * Math.min(1, dt * 16);
+    }
+    const flames = carModel.userData.flames;
+    if (flames) {
+      for (const flame of flames) {
+        flame.visible = Boolean(vehicle.boosting);
+        if (vehicle.boosting) {
+          const pulse = 0.8 + Math.sin(elapsed * 54) * 0.22 + Math.random() * 0.2;
+          flame.scale.set(0.9 + pulse * 0.18, 0.9 + pulse * 0.18, pulse * 1.25);
+        }
+      }
     }
 
     for (const ghost of ghosts.values()) {
@@ -467,6 +520,40 @@ export function createWorld(options) {
         triangles: info.render.triangles,
         pixelRatio: renderer.pixelRatio,
       };
+    },
+    collisions: scene.collisions,
+    cameraState,
+    carRoot,
+    /** @param {string} nextCarId */
+    setCar(nextCarId) {
+      spec = getCarSpec(nextCarId || 'vector');
+      const prev = carModel;
+      carModel = createCarModel(
+        { color: spec.color, accent: spec.accent, assetKey: spec.assetKey },
+        false,
+        options.assets,
+      );
+      carRoot.remove(prev);
+      carRoot.add(carModel);
+      vehicle.spec = spec;
+      const halfTrack = spec.trackWidth / 2;
+      const halfBase = spec.wheelbase / 2;
+      const coords = [
+        [-halfTrack, halfBase],
+        [halfTrack, halfBase],
+        [-halfTrack, -halfBase],
+        [halfTrack, -halfBase],
+      ];
+      vehicle.wheels.forEach((w, idx) => {
+        w.local.set(coords[idx][0], -0.1, coords[idx][1]);
+        w.spec.radius = spec.wheelRadius;
+        w.spec.restLength = spec.suspensionRest;
+        w.spec.stiffness = spec.suspensionK;
+        w.spec.damping = spec.suspensionC;
+        w.spec.maxTravel = spec.maxTravel;
+      });
+      modelDrop = spec.wheelRadius + spec.suspensionRest - 0.1;
+      options.audio?.setCar?.(spec.id);
     },
     dispose() {
       effects.dispose();

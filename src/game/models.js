@@ -73,10 +73,8 @@ function cyl(r, h, seg = 8) {
 }
 
 /**
- * Build the player's car.
- *
- * The body is lofted from cross sections so the car has a real silhouette
- * instead of a stack of boxes.
+ * Build the player's car from real compact GLB models (`GR Supra`, `M4 Competition`,
+ * `GT-R Nismo`) when loaded, with a clean procedural fallback for headless unit tests.
  *
  * @param {{ color: string, accent: string, shape?: string, assetKey?: string }} config
  * @param {boolean} [ghost] remote players render as translucent ghosts
@@ -84,8 +82,133 @@ function cyl(r, h, seg = 8) {
  * @returns {THREE.Group}
  */
 export function createCarModel(config, ghost = false, assets = null) {
-  void assets;
-  return createCar({ ...config, shape: config.shape || config.assetKey }, ghost);
+  const key = config.assetKey || config.shape || 'vector';
+  const loaded = assets?.car?.(key);
+  if (!loaded?.template) {
+    return createCar({ ...config, shape: key }, ghost);
+  }
+
+  const root = new THREE.Group();
+  const instance = loaded.template.clone(true);
+  root.add(instance);
+
+  const paintColor = new THREE.Color(config.color || '#ff2848');
+  const tailMat = new THREE.MeshStandardMaterial({
+    color: 0x3b040c,
+    emissive: new THREE.Color(0xff142e),
+    emissiveIntensity: 1.85,
+    roughness: 0.2,
+    metalness: 0.1,
+  });
+  const tailBarMat = new THREE.MeshStandardMaterial({
+    color: 0x2a0308,
+    emissive: new THREE.Color(0xff2238),
+    emissiveIntensity: 1.15,
+    roughness: 0.22,
+    metalness: 0.1,
+  });
+
+  /** @type {Record<string, THREE.Object3D | null>} */
+  const wheelMap = { Wheel_FL: null, Wheel_FR: null, Wheel_RL: null, Wheel_RR: null };
+
+  instance.traverse((obj) => {
+    if (obj.name in wheelMap) {
+      wheelMap[obj.name] = obj;
+    }
+    if (obj instanceof THREE.Mesh) {
+      obj.castShadow = !ghost;
+      obj.receiveShadow = !ghost;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      const nextMats = mats.map((m) => {
+        if (!m) return new THREE.MeshStandardMaterial();
+        const matName = (m.name || '').toLowerCase();
+        if (!ghost && matName.startsWith('tailight')) {
+          return tailMat;
+        }
+        const cloned = m.clone();
+        if (ghost) {
+          cloned.transparent = true;
+          cloned.opacity = 0.42;
+          cloned.depthWrite = false;
+          if (cloned.color) cloned.color.lerp(paintColor, 0.45);
+        } else if (matName.startsWith('body')) {
+          // Glossy metallic clearcoat paint on untextured body panels (e.g. GR Supra)!
+          cloned.color.copy(paintColor);
+          cloned.metalness = 0.58;
+          cloned.roughness = 0.24;
+        } else if (matName.startsWith('glass')) {
+          cloned.color.setHex(0x0c1420);
+          cloned.metalness = 0.85;
+          cloned.roughness = 0.08;
+        } else if (matName.startsWith('headlight')) {
+          cloned.emissive = new THREE.Color(0xeef6ff);
+          cloned.emissiveIntensity = 1.6;
+        } else if (cloned.map) {
+          cloned.roughness = Math.min(cloned.roughness ?? 0.4, 0.34);
+          cloned.metalness = Math.max(cloned.metalness ?? 0.2, 0.28);
+        }
+        return cloned;
+      });
+      obj.material = Array.isArray(obj.material) ? nextMats : nextMats[0];
+    }
+  });
+
+  // Measure world bounds of the normalized model to place crisp rear brake glow bars & twin boost flames!
+  instance.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(instance);
+  const width = bounds.max.x - bounds.min.x;
+  const rearZ = bounds.min.z;
+
+  if (!ghost) {
+    // Subtle left & right outer brake light glow cores (no center bar blocking real ducktail / quad round GT-R lamps!)
+    const lampGeo = new THREE.BoxGeometry(width * 0.14, 0.042, 0.036);
+    for (const side of [-1, 1]) {
+      const lamp = new THREE.Mesh(lampGeo, tailMat);
+      lamp.position.set(side * width * 0.34, 0.715, rearZ + 0.055);
+      root.add(lamp);
+    }
+
+    // Twin nitrous / anti-lag exhaust afterburner flames!
+    const flameMat = new THREE.MeshBasicMaterial({
+      color: 0x5eead4,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xffb703,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const flameGeo = new THREE.ConeGeometry(0.085, 0.58, 8);
+    flameGeo.rotateX(-Math.PI / 2);
+    flameGeo.translate(0, 0, -0.26);
+    const coreGeo = new THREE.ConeGeometry(0.048, 0.34, 8);
+    coreGeo.rotateX(-Math.PI / 2);
+    coreGeo.translate(0, 0, -0.15);
+
+    const flames = [];
+    for (const side of [-1, 1]) {
+      const group = new THREE.Group();
+      group.position.set(side * width * 0.25, 0.27, rearZ + 0.02);
+      group.add(new THREE.Mesh(flameGeo, flameMat));
+      group.add(new THREE.Mesh(coreGeo, coreMat));
+      group.visible = false;
+      root.add(group);
+      flames.push(group);
+    }
+    root.userData.flames = flames;
+  }
+
+  const wheels = [wheelMap.Wheel_FL, wheelMap.Wheel_FR, wheelMap.Wheel_RL, wheelMap.Wheel_RR].filter(Boolean);
+  root.userData.wheels = wheels;
+  root.userData.frontWheels = wheels.slice(0, 2);
+  root.userData.tailMat = tailMat;
+  root.userData.tailBarMat = tailBarMat;
+  return root;
 }
 
 /**

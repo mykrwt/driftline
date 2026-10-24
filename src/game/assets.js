@@ -21,7 +21,11 @@ const BASE = './assets/models/';
  */
 
 /** @type {Record<string, CarAssetSpec>} */
-export const CAR_ASSETS = {};
+export const CAR_ASSETS = {
+  vector: { file: 'cars/supra.glb', length: 4.38, label: 'GR Supra' },
+  comet: { file: 'cars/m4.glb', length: 4.58, label: 'M4 Competition' },
+  bulldozer: { file: 'cars/gtr.glb', length: 4.66, label: 'GT-R Nismo' },
+};
 
 /**
  * @typedef {object} PropAssetSpec
@@ -279,25 +283,40 @@ function normalizeScene(root, targetHeight, length, yaw = 0) {
  * @returns {{ geometry: THREE.BufferGeometry, material: THREE.Material }[]}
  */
 function mergeByMaterial(root, tints = null) {
+  /** @type {THREE.BufferGeometry[]} */
+  const solidParts = [];
   /** @type {Map<string, { material: THREE.Material, parts: THREE.BufferGeometry[] }>} */
-  const groups = new Map();
+  const texturedGroups = new Map();
   root.updateMatrixWorld(true);
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
-    const material = object.material;
-    const key = Array.isArray(material) ? material[0]?.uuid ?? 'multi' : material.uuid;
-    if (!groups.has(key)) {
-      groups.set(key, { material: Array.isArray(material) ? material[0] : material, parts: [] });
-    }
-    const group = groups.get(key);
-    const pair = tintPairFor(group.material, tints);
-    const geometry = normalizeGeometry(object.geometry, group.material, pair);
+    const rawMat = Array.isArray(object.material) ? object.material[0] : object.material;
+    const pair = tintPairFor(rawMat, tints);
+    const geometry = normalizeGeometry(object.geometry, rawMat, pair);
     geometry.applyMatrix4(object.matrixWorld);
-    group.parts.push(geometry);
+    if (!tints && /** @type {any} */ (rawMat)?.map) {
+      const key = rawMat.uuid;
+      if (!texturedGroups.has(key)) texturedGroups.set(key, { material: rawMat, parts: [] });
+      texturedGroups.get(key).parts.push(geometry);
+    } else {
+      solidParts.push(geometry);
+    }
   });
 
   const result = [];
-  for (const group of groups.values()) {
+  if (solidParts.length > 0) {
+    const merged = mergeGeometries(solidParts);
+    solidParts.forEach((part) => part.dispose());
+    merged.computeBoundingSphere();
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      vertexColors: true,
+      roughness: 0.85,
+      metalness: 0.03,
+    });
+    result.push({ geometry: merged, material });
+  }
+  for (const group of texturedGroups.values()) {
     if (group.parts.length === 0) continue;
     const merged = mergeGeometries(group.parts);
     group.parts.forEach((part) => part.dispose());
@@ -305,11 +324,6 @@ function mergeByMaterial(root, tints = null) {
     const material = group.material?.clone?.() ?? new THREE.MeshStandardMaterial({ color: 0xffffff });
     material.roughness = 0.86;
     material.metalness = 0.02;
-    if (tints) {
-      material.color = new THREE.Color(0xffffff);
-      material.vertexColors = true;
-      material.map = null;
-    }
     if (material.map) material.map.colorSpace = THREE.SRGBColorSpace;
     result.push({ geometry: merged, material });
   }
@@ -327,13 +341,15 @@ export function createAssetLibrary() {
   const props = new Map();
   /** @type {Map<string, { geometry: THREE.BufferGeometry, material: THREE.MeshStandardMaterial }>} */
   const impostors = new Map();
+  /** @type {{ geometry: THREE.BufferGeometry, material: THREE.MeshStandardMaterial, entries: Record<string, { u: number, v: number, width: number, height: number }>, target: THREE.WebGLRenderTarget } | null} */
+  let atlasCache = null;
   /** @type {Record<string, HTMLImageElement>} */
   const textures = {};
   /** @type {Map<string, { root: THREE.Object3D, wheels: THREE.Object3D[] }>} */
   const cars = new Map();
   let ready = false;
-  let currentTint = '#ffffff';
-  let currentEmissive = 0.56;
+  let currentTint = '#dce6d8';
+  let currentEmissive = 0.12;
 
   async function loadScene(key, file) {
     if (scenes.has(key)) return scenes.get(key);
@@ -357,28 +373,7 @@ export function createAssetLibrary() {
     const scene = await loadScene(key, spec.file);
     const clone = scene.clone(true);
     normalizeScene(clone, 0, spec.length);
-
-    /** @type {THREE.Object3D[]} */
-    const wheels = [];
-    /** @type {THREE.Object3D[]} */
-    const bodyParts = [];
-    clone.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        object.material = object.material?.clone?.() ?? new THREE.MeshStandardMaterial();
-        object.material.roughness = 0.45;
-        object.material.metalness = 0.25;
-        object.castShadow = false;
-        object.receiveShadow = false;
-      }
-      const name = (object.name || '').toLowerCase();
-      if (object instanceof THREE.Mesh && name.includes('wheel')) wheels.push(object);
-      else if (object instanceof THREE.Mesh) bodyParts.push(object);
-    });
-
-    const root = new THREE.Group();
-    for (const part of bodyParts) root.add(part);
-    for (const wheel of wheels) root.add(wheel);
-    return { root, wheels };
+    return { template: clone, key, spec };
   }
 
   function loadTexture(name) {
@@ -539,6 +534,161 @@ export function createAssetLibrary() {
       return result;
     },
     /**
+     * Bake up to 16 vegetation species into ONE shared 1024x1024 mipmapped
+     * 4x4 texture atlas so ALL thousands of distant trees, shrubs, and flowers
+     * across the entire valley render in ONE single GPU draw call!
+     *
+     * @param {any} renderer
+     * @param {string[]} keys
+     */
+    vegetationAtlas(renderer, keys) {
+      if (atlasCache) return atlasCache;
+      const valid = keys.filter((k) => {
+        const s = scenes.get(k);
+        return s && typeof s.clone === 'function';
+      }).slice(0, 16);
+      if (!renderer || valid.length === 0) return null;
+
+      const GRID = 4;
+      const CELL = 256;
+      const ATLAS = GRID * CELL;
+      const PAD_FRAC = 0.04; // 4% safe gutter per side prevents mipmap bleed!
+      const SPAN_UV = (1 / GRID) * (1 - PAD_FRAC * 2);
+
+      const target = new THREE.WebGLRenderTarget(ATLAS, ATLAS, {
+        minFilter: THREE.LinearMipmapLinearFilter,
+        magFilter: THREE.LinearFilter,
+        generateMipmaps: true,
+        depthBuffer: true,
+      });
+      target.texture.colorSpace = THREE.SRGBColorSpace;
+
+      const previousTarget = renderer.getRenderTarget();
+      const previousClear = renderer.getClearColor(new THREE.Color());
+      const previousAlpha = renderer.getClearAlpha();
+      const previousToneMapping = renderer.toneMapping;
+      const prevScissor = renderer.getScissorTest();
+      const prevViewport = renderer.getViewport(new THREE.Vector4());
+      const prevScissorBox = renderer.getScissor(new THREE.Vector4());
+
+      renderer.toneMapping = THREE.NoToneMapping;
+      renderer.setRenderTarget(target);
+      renderer.setScissorTest(false);
+      renderer.setViewport(0, 0, ATLAS, ATLAS);
+      renderer.setClearColor(0x2a4528, 0);
+      renderer.clear();
+      renderer.setScissorTest(true);
+
+      /** @type {Record<string, { u: number, v: number, width: number, height: number }>} */
+      const entries = {};
+
+      valid.forEach((key, idx) => {
+        const col = idx % GRID;
+        const row = Math.floor(idx / GRID);
+        const preview = new THREE.Scene();
+        const clone = scenes.get(key).clone(true);
+        tintScene(clone, PROP_TINTS[key] ?? null);
+        normalizeScene(clone, PROP_ASSETS[key]?.height ?? 0, undefined, PROP_ASSETS[key]?.yaw ?? 0);
+        preview.add(clone);
+
+        const box = new THREE.Box3().setFromObject(clone);
+        const dim = new THREE.Vector3();
+        const centre = new THREE.Vector3();
+        box.getSize(dim);
+        box.getCenter(centre);
+
+        preview.add(new THREE.HemisphereLight(0xd4e8ff, 0x5c6f52, 2.25));
+        preview.add(new THREE.AmbientLight(0xffffff, 0.85));
+        const keyLight = new THREE.DirectionalLight(0xfff1cf, 2.35);
+        keyLight.position.set(centre.x + 36, centre.y + 52, 42);
+        preview.add(keyLight);
+        const rimLight = new THREE.DirectionalLight(0xbcd9ff, 0.75);
+        rimLight.position.set(centre.x - 32, centre.y + 24, 28);
+        preview.add(rimLight);
+
+        const padX = (dim.x * PAD_FRAC) / (1 - PAD_FRAC * 2);
+        const padY = (dim.y * PAD_FRAC) / (1 - PAD_FRAC * 2);
+        const cam = new THREE.OrthographicCamera(
+          -dim.x / 2 - padX,
+          dim.x / 2 + padX,
+          dim.y / 2 + padY,
+          -dim.y / 2 - padY,
+          0.1,
+          400,
+        );
+        cam.position.set(centre.x, centre.y, 60);
+        cam.lookAt(centre);
+
+        const vx = col * CELL;
+        const vy = row * CELL;
+        renderer.setViewport(vx, vy, CELL, CELL);
+        renderer.setScissor(vx, vy, CELL, CELL);
+        renderer.render(preview, cam);
+
+        entries[key] = {
+          u: (col + PAD_FRAC) / GRID,
+          v: (row + PAD_FRAC) / GRID,
+          width: dim.x,
+          height: dim.y,
+        };
+      });
+
+      renderer.setScissorTest(prevScissor);
+      renderer.setViewport(prevViewport);
+      renderer.setScissor(prevScissorBox);
+      renderer.setRenderTarget(previousTarget);
+      renderer.setClearColor(previousClear, previousAlpha);
+      renderer.toneMapping = previousToneMapping;
+
+      const geometry = createImpostorGeometry(1, 1);
+      const material = new THREE.MeshStandardMaterial({
+        map: target.texture,
+        alphaTest: 0.42,
+        side: THREE.DoubleSide,
+        roughness: 0.94,
+        metalness: 0,
+        color: new THREE.Color(currentTint),
+        emissive: new THREE.Color(currentTint),
+        emissiveMap: target.texture,
+        emissiveIntensity: currentEmissive,
+      });
+
+      const timeUniform = { value: 0 };
+      const spanUniform = { value: SPAN_UV };
+      material.userData.time = timeUniform;
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.uTime = timeUniform;
+        shader.uniforms.uAtlasSpan = spanUniform;
+        shader.vertexShader = `attribute vec4 aAtlasRect;\nuniform float uTime;\nuniform float uAtlasSpan;\n${shader.vertexShader}`
+          .replace(
+            '#include <uv_vertex>',
+            `#include <uv_vertex>
+             #ifdef USE_MAP
+               vMapUv = uv * uAtlasSpan + aAtlasRect.xy;
+             #endif
+             #ifdef USE_EMISSIVEMAP
+               vEmissiveMapUv = uv * uAtlasSpan + aAtlasRect.xy;
+             #endif`,
+          )
+          .replace(
+            '#include <begin_vertex>',
+            `#include <begin_vertex>
+             transformed.x *= aAtlasRect.z;
+             transformed.y *= aAtlasRect.w;
+             #ifdef USE_INSTANCING
+               float phase = instanceMatrix[3].x * 0.21 + instanceMatrix[3].z * 0.17;
+               float sway = sin(uTime * 0.9 + phase) * 0.6
+                          + sin(uTime * 1.7 + phase * 1.7) * 0.25;
+               transformed.x += sway * 0.014 * max(0.0, transformed.y);
+             #endif`,
+          );
+      };
+      material.customProgramCacheKey = () => 'driftline-veg-atlas-v1';
+
+      atlasCache = { geometry, material, entries, target };
+      return atlasCache;
+    },
+    /**
      * Update foliage lighting mood live when switching Alpine Day / Golden Hour / Midnight.
      * @param {string} tintHex
      * @param {number} emissiveIntensity
@@ -551,6 +701,11 @@ export function createAssetLibrary() {
         entry.material.emissive.set(tintHex);
         entry.material.emissiveIntensity = emissiveIntensity;
       }
+      if (atlasCache) {
+        atlasCache.material.color.set(tintHex).multiplyScalar(0.84);
+        atlasCache.material.emissive.set(tintHex);
+        atlasCache.material.emissiveIntensity = emissiveIntensity * 0.2;
+      }
     },
     carKeys() {
       return Array.from(cars.keys());
@@ -559,6 +714,9 @@ export function createAssetLibrary() {
       for (const entry of impostors.values()) {
         const uniform = entry.material.userData?.time;
         if (uniform) uniform.value = time;
+      }
+      if (atlasCache?.material.userData?.time) {
+        atlasCache.material.userData.time.value = time;
       }
     },
     propKeys() {

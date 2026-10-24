@@ -6,7 +6,8 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { createRoadTexture, createGroundNormalMap } from './models.js';
 import { createChunkManager } from './chunks.js';
-import { createTerrainManager } from './terrain.js';
+import { createTerrainManager, VEGETATION_KEYS } from './terrain.js';
+import { createCollisionWorld } from './collision.js';
 import { roadHeight } from './road.js';
 import { PALETTES, resolvePalette } from './palette.js';
 import { createWaterMaterial } from './water.js';
@@ -213,10 +214,10 @@ export function createWorldScene(profile, options) {
           return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
         }
 
-        float fbm(vec2 p) {
+        float fbm3(vec2 p) {
           float value = 0.0;
           float amplitude = 0.5;
-          for (int i = 0; i < 5; i++) {
+          for (int i = 0; i < 3; i++) {
             value += noise(p) * amplitude;
             p = mat2(1.64, 1.18, -1.18, 1.64) * p;
             amplitude *= 0.5;
@@ -229,7 +230,6 @@ export function createWorldScene(profile, options) {
           float h = dir.y;
           vec3 sDir = normalize(sunDirection);
 
-          // Rayleigh vertical sky curve + subtle warm azimuth scatter towards sun.
           vec3 color = mix(horizonColor, topColor, pow(clamp(smoothstep(-0.02, 0.92, h), 0.0, 1.0), 0.78));
           color = mix(groundColor, color, smoothstep(-0.22, 0.03, h));
 
@@ -240,13 +240,13 @@ export function createWorldScene(profile, options) {
           color += sunColor * pow(sun, 34.0) * 0.34;
           color += sunColor * pow(sun, 5.0) * 0.09;
 
-          // Layered cumulus + high cirrus wisps scaled naturally by sky luminance (never gray at night!).
           if (h > 0.005) {
             vec2 cloudUv = dir.xz / max(h + 0.13, 0.13);
             float drift = time * 0.0035;
-            float base = fbm(cloudUv * 0.36 + vec2(drift, drift * 0.35));
-            float detail = fbm(cloudUv * 1.15 - vec2(drift * 1.5, 0.0));
-            float cirrus = fbm(cloudUv * vec2(0.22, 0.95) + vec2(drift * 0.7, 0.0));
+            float base = fbm3(cloudUv * 0.36 + vec2(drift, drift * 0.35));
+            float detail = noise(cloudUv * 1.15 - vec2(drift * 1.5, 0.0)) * 0.65
+                         + noise(cloudUv * 2.35 + vec2(0.0, drift)) * 0.35;
+            float cirrus = fbm3(cloudUv * vec2(0.22, 0.95) + vec2(drift * 0.7, 0.0));
 
             float puff = smoothstep(0.47, 0.84, base * 0.74 + detail * 0.34);
             float wisps = smoothstep(0.62, 0.90, cirrus) * 0.34;
@@ -346,6 +346,8 @@ export function createWorldScene(profile, options) {
 
   applyProceduralTerrainShader(terrainMaterial);
 
+  const collisions = createCollisionWorld();
+
   /** @type {Record<string, any>} */
   const impostors = {};
   const getImpostor = (key) => {
@@ -355,12 +357,16 @@ export function createWorldScene(profile, options) {
     if (impostor) impostors[key] = impostor;
     return impostor;
   };
+  const getAtlas = () => {
+    if (!options.assets || !options.renderer) return null;
+    return options.assets.vegetationAtlas?.(options.renderer, VEGETATION_KEYS) ?? null;
+  };
 
   const water = createWaterMaterial({
     fog: palette.fog,
     sky: palette.skyHorizon,
-    deep: palette.waterDeep ?? '#12405e',
-    shallow: palette.waterShallow ?? '#2d93a3',
+    deep: palette.waterDeep ?? '#06263d',
+    shallow: palette.waterShallow ?? '#167a8a',
     sun: palette.sun,
     sunDirection: computeSunDir(palette),
   });
@@ -374,7 +380,9 @@ export function createWorldScene(profile, options) {
     terrainMaterial,
     assets: options.assets,
     getImpostor,
+    getAtlas,
     waterMaterial: water.material,
+    collisions,
   });
 
   const chunks = createChunkManager({
@@ -384,6 +392,7 @@ export function createWorldScene(profile, options) {
     seed: options.seed,
     roadMaterial,
     terrainMaterial,
+    collisions,
     groundHeight: (s, lateral) => terrain.sampleHeight(s, lateral),
     groundCell: (s, lateral) => terrain.sampleCell(s, lateral),
   });
@@ -392,6 +401,7 @@ export function createWorldScene(profile, options) {
     scene,
     chunks,
     terrain,
+    collisions,
     palette,
     sun,
     terrainMaterial,

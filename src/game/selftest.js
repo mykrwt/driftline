@@ -21,6 +21,7 @@ export function createSelfTest(driftline) {
       return ok;
     };
 
+    if (driftline.phase !== 'racing') driftline.startRace?.({ seed: 20260920 });
     const world = driftline.world;
     const vehicle = world?.vehicle;
     if (!world || !vehicle) {
@@ -163,7 +164,17 @@ export function createSelfTest(driftline) {
       `${floating} of ${checked} are off the mesh, the worst by ${worst.toFixed(2)} m`,
     );
 
+    // --- the guardrails keep the car safe ------------------------------
+    const colStats = world.collisions?.stats ?? { rails: 0, obstacles: 0 };
+    check(
+      'the guardrails & solid obstacles register',
+      colStats.rails > 10 && colStats.obstacles > 2,
+      `${colStats.rails} rail segments, ${colStats.obstacles} solid props`,
+    );
+
     // --- the drift -----------------------------------------------------
+    world.respawn?.();
+    driftline.input.clear();
     world.setAutopilot(false);
     key('ArrowUp', 'keydown');
     step(150);
@@ -173,9 +184,9 @@ export function createSelfTest(driftline) {
     for (let i = 0; i < 240; i++) {
       driftline.input.update(1 / 60);
       world.update(1 / 60);
-      world.render(1 / 60);
       slip = Math.max(slip, Math.abs(vehicle.slipAngle));
     }
+    world.render(1 / 60);
     key('Space', 'keyup');
     key('ArrowRight', 'keyup');
     key('ArrowUp', 'keyup');

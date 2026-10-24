@@ -88,6 +88,7 @@ let peerScores = [];
 let worldSeed = (Math.random() * 0xffffff) | 0;
 /** The palette the running world is using. */
 let appliedPalette = settings.palette;
+let appliedCar = settings.car;
 
 const menus = createMenus({
   settings,
@@ -140,7 +141,7 @@ const menus = createMenus({
   },
   onSettingsChange: (next) => {
     const paletteChanged = next.palette !== appliedPalette;
-    const carChanged = next.car !== settings.car;
+    const carChanged = next.car !== appliedCar;
     Object.assign(settings, next);
     saveState({ settings, records });
     applySettings();
@@ -148,8 +149,13 @@ const menus = createMenus({
       appliedPalette = next.palette;
       world?.setPalette(PALETTES[settings.palette] ?? PALETTES.alpine);
     }
-    if (carChanged && phase === 'menu') {
-      bootMenuBackdrop();
+    if (carChanged) {
+      appliedCar = next.car;
+      world?.setCar?.(settings.car);
+      void audio.unlock().then(() => {
+        audio.setCar(settings.car);
+        audio.revBlip?.();
+      });
     }
   },
   onCopy: (text) => {
@@ -179,7 +185,7 @@ async function copyText(text, message) {
 /**
  * @param {{ seed?: number }} config
  */
-function startRace(config) {
+function startRace(config = {}) {
   disposeWorld();
   world = createWorld({
     canvas,
@@ -789,6 +795,10 @@ globalThis.__driftline = {
     get input() {
       return input;
     },
+    get phase() {
+      return phase;
+    },
+    startRace,
   }),
   /**
    * @param {boolean} value

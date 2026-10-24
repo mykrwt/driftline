@@ -311,48 +311,72 @@ export function createCar(config, ghost = false) {
 
   // --- lights -----------------------------------------------------------
   const headMat = new THREE.MeshStandardMaterial({
-    color: 0xfff6e2,
-    emissive: 0xffeec2,
-    emissiveIntensity: 1.1,
-    roughness: 0.25,
+    color: 0xfff8e8,
+    emissive: 0xfff0c8,
+    emissiveIntensity: 1.5,
+    roughness: 0.2,
   });
   const tailMat = new THREE.MeshStandardMaterial({
-    color: 0xff3b52,
-    emissive: 0xff1f38,
-    emissiveIntensity: 1.4,
-    roughness: 0.35,
+    color: 0xff2b44,
+    emissive: 0xff1632,
+    emissiveIntensity: 1.85,
+    roughness: 0.24,
   });
-  const nose = shape.body[shape.body.length - 1][0];
-  const tail = shape.body[0][0];
+  const tailBarMat = new THREE.MeshStandardMaterial({
+    color: 0xb81428,
+    emissive: 0xff1836,
+    emissiveIntensity: 1.15,
+    roughness: 0.3,
+  });
+  const noseZ = shape.body[shape.body.length - 1][0];
+  const tailZ = shape.body[0][0];
+  const rearHalfW = shape.body[0][1];
+  const rearTopY = shape.body[0][3];
+
+  // Sleek full-width rear LED light bar across the tail fascia!
+  const tailBar = new THREE.Mesh(new THREE.BoxGeometry(rearHalfW * 1.82, 0.055, 0.06), tailBarMat);
+  tailBar.position.set(0, rearTopY - 0.065, tailZ - 0.012);
+  group.add(tailBar);
+
+  // Rear license plate recess on lower bumper.
+  const plateMat = new THREE.MeshStandardMaterial({ color: 0xe9eef6, roughness: 0.5, metalness: 0.1 });
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.105, 0.04), plateMat);
+  plate.position.set(0, shape.body[0][2] + 0.09, tailZ - 0.01);
+  group.add(plate);
+
   for (const side of [-1, 1]) {
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.13, 0.1), headMat);
-    head.position.set(side * shape.width * 0.33, shape.body[shape.body.length - 2][3] - 0.08, nose - 0.04);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.12, 0.1), headMat);
+    head.position.set(
+      side * shape.body[shape.body.length - 2][1] * 0.68,
+      shape.body[shape.body.length - 2][3] - 0.06,
+      noseZ - 0.04,
+    );
     group.add(head);
 
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.12, 0.08), tailMat);
-    tail.position.set(side * shape.width * 0.33, shape.body[1][3] - 0.06, tail + 0.03);
-    group.add(tail);
+    const tailLamp = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.115, 0.075), tailMat);
+    tailLamp.position.set(side * rearHalfW * 0.68, rearTopY - 0.065, tailZ - 0.018);
+    group.add(tailLamp);
   }
 
   // --- wing --------------------------------------------------------------
   if (shape.wing) {
     const wing = new THREE.Mesh(new THREE.BoxGeometry(shape.width * 0.94, 0.07, 0.4), trimMat);
-    wing.position.set(0, shape.body[1][3] + 0.34, tail + 0.16);
+    wing.position.set(0, shape.body[1][3] + 0.34, tailZ + 0.18);
     wing.castShadow = true;
     group.add(wing);
     for (const side of [-1, 1]) {
       const stand = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.3, 0.16), trimMat);
-      stand.position.set(side * shape.width * 0.36, shape.body[1][3] + 0.16, tail + 0.16);
+      stand.position.set(side * shape.width * 0.36, shape.body[1][3] + 0.16, tailZ + 0.18);
       group.add(stand);
     }
   }
   if (shape.bullbar) {
     const bar = new THREE.Mesh(new THREE.BoxGeometry(shape.width * 0.9, 0.12, 0.12), trimMat);
-    bar.position.set(0, 0.78, nose + 0.08);
+    bar.position.set(0, 0.78, noseZ + 0.08);
     group.add(bar);
     for (const side of [-1, 1]) {
       const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.1), trimMat);
-      post.position.set(side * shape.width * 0.34, 0.55, nose + 0.04);
+      post.position.set(side * shape.width * 0.34, 0.55, noseZ + 0.04);
       group.add(post);
     }
   }
@@ -362,25 +386,41 @@ export function createCar(config, ghost = false) {
     new THREE.BoxGeometry(shape.width * 0.52, 0.16, 0.08),
     trimMat,
   );
-  grille.position.set(0, shape.body[shape.body.length - 2][3] - 0.14, nose - 0.02);
+  grille.position.set(0, shape.body[shape.body.length - 2][3] - 0.14, noseZ - 0.02);
   group.add(grille);
 
   const diffuser = new THREE.Mesh(
-    new THREE.BoxGeometry(shape.width * 0.7, 0.1, 0.3),
+    new THREE.BoxGeometry(shape.width * 0.66, 0.1, 0.3),
     trimMat,
   );
-  diffuser.position.set(0, 0.26, tail + 0.1);
+  diffuser.position.set(0, 0.26, tailZ + 0.1);
   group.add(diffuser);
 
-  // --- exhaust -----------------------------------------------------------
+  // --- exhaust & boost afterburner flames --------------------------------
+  const flameMat = new THREE.MeshBasicMaterial({
+    color: 0x5be2ff,
+    transparent: true,
+    opacity: 0.88,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
   /** @type {THREE.Mesh[]} */
   const exhausts = [];
+  /** @type {THREE.Mesh[]} */
+  const flames = [];
   for (const side of [-1, 1]) {
-    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.18, 8), rimMat);
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.068, 0.2, 8), rimMat);
     pipe.rotation.x = Math.PI / 2;
-    pipe.position.set(side * 0.34, 0.3, tail - 0.06);
+    pipe.position.set(side * 0.32, 0.3, tailZ - 0.05);
     group.add(pipe);
     exhausts.push(pipe);
+
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.48, 8), flameMat);
+    flame.rotation.x = -Math.PI / 2;
+    flame.position.set(side * 0.32, 0.3, tailZ - 0.30);
+    flame.visible = false;
+    group.add(flame);
+    flames.push(flame);
   }
 
   // --- wheels ------------------------------------------------------------
@@ -456,6 +496,8 @@ export function createCar(config, ghost = false) {
   group.userData.shape = shape;
   group.userData.headMat = headMat;
   group.userData.tailMat = tailMat;
+  group.userData.tailBarMat = tailBarMat;
   group.userData.exhaust = exhausts;
+  group.userData.flames = flames;
   return group;
 }

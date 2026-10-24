@@ -80,7 +80,10 @@ export function createEffects(scene) {
   /** @type {{x:number,y:number,z:number,vx:number,vy:number,vz:number,life:number,max:number,size:number,tint:number[]}[]} */
   const particles = [];
   for (let i = 0; i < MAX_PARTICLES; i++) {
-    particles.push({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, max: 1, size: 1, tint: [1, 1, 1] });
+    particles.push({
+      x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
+      life: 0, max: 1, size: 1, tint: [1, 1, 1], spark: false,
+    });
     alphas[i] = 0;
     sizes[i] = 0;
   }
@@ -128,6 +131,30 @@ export function createEffects(scene) {
     p.life = p.max;
     p.size = 0.9 + Math.random() * 1.1 + intensity * 1.4;
     p.tint = tint || [0.92, 0.92, 0.95];
+    p.spark = false;
+  }
+
+  /**
+   * Hot golden-orange metallic sparks from guardrail / lamp-post scrapes & impacts!
+   */
+  function emitSpark(x, y, z, vx, vz, nx, nz, intensity = 1) {
+    const count = Math.min(8, Math.max(2, Math.round(intensity * 6)));
+    for (let k = 0; k < count; k++) {
+      const p = particles[particleCursor];
+      particleCursor = (particleCursor + 1) % MAX_PARTICLES;
+      p.x = x + (Math.random() - 0.5) * 0.22;
+      p.y = y + (Math.random() - 0.5) * 0.16;
+      p.z = z + (Math.random() - 0.5) * 0.22;
+      const scatter = 2.5 + intensity * 5.5;
+      p.vx = vx * 0.42 + nx * (1.4 + Math.random() * 3.2) + (Math.random() - 0.5) * scatter;
+      p.vy = 1.6 + Math.random() * (3.2 + intensity * 2.5);
+      p.vz = vz * 0.42 + nz * (1.4 + Math.random() * 3.2) + (Math.random() - 0.5) * scatter;
+      p.max = 0.22 + Math.random() * 0.26;
+      p.life = p.max;
+      p.size = 0.18 + Math.random() * 0.22;
+      p.tint = Math.random() > 0.35 ? [3.6, 2.1, 0.55] : [4.2, 3.6, 1.8];
+      p.spark = true;
+    }
   }
 
   /**
@@ -192,15 +219,21 @@ export function createEffects(scene) {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;
-      p.vy *= 0.985;
-      p.vx *= 0.96;
-      p.vz *= 0.96;
+      if (p.spark) {
+        p.vy -= 12.5 * dt;
+        p.vx *= 0.985;
+        p.vz *= 0.985;
+      } else {
+        p.vy *= 0.985;
+        p.vx *= 0.96;
+        p.vz *= 0.96;
+      }
       const o = i * 3;
       positions[o] = p.x;
       positions[o + 1] = p.y;
       positions[o + 2] = p.z;
-      sizes[i] = p.size * (0.55 + t * 1.65);
-      alphas[i] = Math.max(0, Math.pow(1 - t, 1.75) * 0.28);
+      sizes[i] = p.spark ? p.size * (1.0 - t * 0.55) : p.size * (0.55 + t * 1.65);
+      alphas[i] = p.spark ? Math.max(0, (1 - t) * 0.95) : Math.max(0, Math.pow(1 - t, 1.75) * 0.28);
       colors[o] = p.tint[0];
       colors[o + 1] = p.tint[1];
       colors[o + 2] = p.tint[2];
@@ -227,6 +260,7 @@ export function createEffects(scene) {
     smoke,
     skid,
     emitSmoke,
+    emitSpark,
     addSkid,
     update,
     reset,
